@@ -1,0 +1,12 @@
+build/
+.vs/
+out/
+Debug/
+Release/
+x64/
+*.vcxproj.user
+*.suo
+*.obj
+*.pdb
+*.ilk
+*.tlog
