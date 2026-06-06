@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include "platform/DigiKeyApi.h"
+
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -8,11 +10,14 @@
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <initializer_list>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <unordered_map>
+#include <utility>
 #include <thread>
 
 namespace hims {
@@ -166,6 +171,40 @@ ftxui::Element panel(const std::string& title, ftxui::Elements body, std::option
     element = element | ftxui::color(*borderColor);
   }
   return element;
+}
+
+ftxui::Element quantityBadge(int quantity, bool selected = false) {
+  const auto fg = quantity <= 0 ? uiDangerColor() : (quantity <= 5 ? uiWarnColor() : uiSuccessColor());
+  const auto bg = selected ? ftxui::Color::RGB(18, 18, 18)
+                           : (quantity <= 0 ? ftxui::Color::RGB(52, 22, 22)
+                                            : (quantity <= 5 ? ftxui::Color::RGB(58, 42, 14)
+                                                             : ftxui::Color::RGB(18, 44, 28)));
+  return ftxui::text(" QTY " + std::to_string(quantity) + " ") | ftxui::bold | ftxui::color(fg) | ftxui::bgcolor(bg);
+}
+
+std::string displayCategory(const std::string& category) {
+  auto value = trim(category);
+  const auto slash = value.find(" / ");
+  if (slash != std::string::npos) {
+    value = trim(value.substr(0, slash));
+  }
+
+  const auto openParen = value.find(" (");
+  if (openParen != std::string::npos) {
+    value = trim(value.substr(0, openParen));
+  }
+
+  return value;
+}
+
+std::string ellipsize(const std::string& value, std::size_t maxLength) {
+  if (maxLength == 0 || value.size() <= maxLength) {
+    return value;
+  }
+  if (maxLength <= 3) {
+    return value.substr(0, maxLength);
+  }
+  return value.substr(0, maxLength - 3) + "...";
 }
 
 KeyEvent translateEvent(const ftxui::Event& event) {
@@ -351,7 +390,7 @@ std::string renderTags(const std::vector<std::string>& tags) {
   if (tags.empty()) {
     return "-";
   }
-  return join(tags, ',');
+  return ellipsize(join(tags, ','), 32);
 }
 
 std::string renderParameters(const std::vector<Parameter>& parameters) {
@@ -370,7 +409,432 @@ std::string renderParameters(const std::vector<Parameter>& parameters) {
 }
 
 std::string renderUrl(const std::string& url) {
-  return url.empty() ? std::string("-") : url;
+  if (url.empty()) {
+    return "-";
+  }
+  return ellipsize(url, 32);
+}
+
+struct DetailField {
+  std::string label;
+  std::string value;
+  ftxui::Color labelColor;
+  ftxui::Color valueColor;
+};
+
+std::string normalizeKey(std::string value) {
+  std::string normalized;
+  normalized.reserve(value.size());
+  for (unsigned char ch : value) {
+    if (std::isalnum(ch)) {
+      normalized.push_back(static_cast<char>(std::tolower(ch)));
+    }
+  }
+  return normalized;
+}
+
+bool categoryContains(const InventoryItem& item, std::initializer_list<const char*> needles) {
+  const auto category = normalizeKey(displayCategory(item.category));
+  for (const auto* needle : needles) {
+    const auto normalizedNeedle = normalizeKey(needle);
+    if (category.find(normalizedNeedle) != std::string::npos || normalizedNeedle.find(category) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool parameterLabelMatches(const std::string& lhs, const std::string& rhs) {
+  const auto normalizedLhs = normalizeKey(lhs);
+  const auto normalizedRhs = normalizeKey(rhs);
+  return normalizedLhs == normalizedRhs || normalizedLhs.find(normalizedRhs) != std::string::npos ||
+         normalizedRhs.find(normalizedLhs) != std::string::npos;
+}
+
+bool looksLikePackagingValue(const std::string& value) {
+  const auto normalized = normalizeKey(value);
+  if (normalized.empty()) {
+    return false;
+  }
+
+  static const std::initializer_list<const char*> kPackagingTokens = {
+      "tapeandreel", "cuttape", "digireel", "tube", "tray", "bulk", "bag", "strip", "ammo", "box", "loose",
+      "pack", "reel"};
+  return std::any_of(kPackagingTokens.begin(), kPackagingTokens.end(), [&](const char* token) {
+    return normalized == token || normalized.find(token) != std::string::npos;
+  });
+}
+
+const Parameter* findParameter(const std::vector<Parameter>& parameters, std::initializer_list<const char*> names) {
+  for (const auto* name : names) {
+    for (const auto& parameter : parameters) {
+      if (parameterLabelMatches(parameter.name, name)) {
+        return &parameter;
+      }
+    }
+  }
+  return nullptr;
+}
+
+std::optional<std::string> parameterValue(const InventoryItem& item, std::initializer_list<const char*> names) {
+  if (const auto* parameter = findParameter(item.parameters, names); parameter != nullptr) {
+    const auto value = trim(parameter->value);
+    if (!value.empty() && !looksLikePackagingValue(value)) {
+      return value;
+    }
+  }
+  return std::nullopt;
+}
+
+std::string prettyLabel(const std::string& label) {
+  const auto trimmed = trim(label);
+  if (!trimmed.empty()) {
+    return trimmed;
+  }
+  return "Value";
+}
+
+std::vector<DetailField> electricalFieldsForItem(const InventoryItem& item) {
+  std::vector<DetailField> fields;
+  const auto addField = [&](const std::string& label, std::optional<std::string> value) {
+    if (value && !trim(*value).empty()) {
+      fields.push_back({label + ": ", *value, uiLabelColor(), uiTitleColor()});
+    }
+  };
+  const auto addValueAndPackage = [&](const std::string& label, std::optional<std::string> value,
+                                      std::optional<std::string> package) {
+    addField(label, std::move(value));
+    addField("Package", std::move(package));
+  };
+  const auto hasParameter = [&](std::initializer_list<const char*> names) {
+    return findParameter(item.parameters, names) != nullptr;
+  };
+
+  const auto package = parameterValue(item, {"Package / Case", "Package Case", "Case / Package", "Case Package",
+                                             "Supplier Device Package", "Device Package", "Package"});
+
+  if (categoryContains(item, {"capacitor"})) {
+    addValueAndPackage("Capacitance", parameterValue(item, {"Capacitance", "Value"}), package);
+    addField("Operating Voltage", parameterValue(item, {"Operating Voltage", "Voltage", "Voltage - Rated", "Rated Voltage"}));
+    addField("Tolerance", parameterValue(item, {"Tolerance"}));
+    addField("Type", parameterValue(item, {"Type", "Dielectric", "Dielectric Type"}));
+    addField("ESR", parameterValue(item, {"ESR", "ESR (Equivalent Series Resistance)"}));
+    addField("Lifetime @ Temp.", parameterValue(item, {"Lifetime @ Temp.", "Lifetime"}));
+    addField("Polarization", parameterValue(item, {"Polarization"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+    addField("Applications", parameterValue(item, {"Applications"}));
+    addField("Size / Dimension", parameterValue(item, {"Size / Dimension"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"resistor"})) {
+    addValueAndPackage("Resistance", parameterValue(item, {"Resistance", "Value"}), package);
+    addField("Power Dissipation",
+             parameterValue(item, {"Power Dissipation", "Power (Watts)", "Power Rating", "Power", "Power - Max", "Watts"}));
+    addField("Tolerance", parameterValue(item, {"Tolerance"}));
+    addField("Composition", parameterValue(item, {"Composition"}));
+    addField("Temperature Coefficient", parameterValue(item, {"Temperature Coefficient", "Tempco"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+    addField("Size / Dimension", parameterValue(item, {"Size / Dimension"}));
+    addField("Height", parameterValue(item, {"Height - Seated (Max)", "Height"}));
+    addField("Number of Terminations", parameterValue(item, {"Number of Terminations"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"indicator", "led"})) {
+    addValueAndPackage("Color", parameterValue(item, {"Color"}), package);
+    addField("Forward Voltage", parameterValue(item, {"Forward Voltage", "Vf"}));
+    addField("Wavelength", parameterValue(item, {"Wavelength"}));
+    addField("Current", parameterValue(item, {"Current", "If", "Forward Current"}));
+    addField("Type", parameterValue(item, {"Type"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"integrated circuit", "integrated circuits"})) {
+    if (hasParameter({"Memory Type", "Memory Format", "Memory Size"}) ||
+        hasParameter({"Program Memory Size", "Program Memory Type"})) {
+      addValueAndPackage("Memory", parameterValue(item, {"Memory Size", "Program Memory Size", "Memory"}), package);
+      addField("Memory Type", parameterValue(item, {"Memory Type", "Memory Format"}));
+      addField("Memory Interface", parameterValue(item, {"Memory Interface", "Interface"}));
+      addField("Technology", parameterValue(item, {"Technology"}));
+      addField("Clock", parameterValue(item, {"Clock Frequency", "Speed"}));
+      addField("Operating Voltage", parameterValue(item, {"Voltage - Supply", "Voltage - Supply (Min/Max)", "Voltage - Supply (Min)", "Voltage - Supply (Max)"}));
+      addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+      addField("Mounting Type", parameterValue(item, {"Mounting Type"}));
+      addField("DigiKey Programmable", parameterValue(item, {"DigiKey Programmable"}));
+      return fields;
+    }
+
+    if (hasParameter({"Voltage - Input", "Voltage - Output", "Current - Output", "Output Type", "Voltage - Output (Min/Fixed)"})) {
+      addValueAndPackage("Output Voltage",
+                         parameterValue(item, {"Voltage - Output", "Voltage - Output (Min/Fixed)", "Voltage - Output (Max)", "Output Voltage"}),
+                         package);
+      addField("Input Voltage", parameterValue(item, {"Voltage - Input", "Voltage - Input (Min/Max)", "Vin"}));
+      addField("Current", parameterValue(item, {"Current - Output", "Output Current", "Current"}));
+      addField("Type", parameterValue(item, {"Type", "Output Type"}));
+      addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+      addField("Mounting Type", parameterValue(item, {"Mounting Type"}));
+      return fields;
+    }
+
+    addValueAndPackage("Function", parameterValue(item, {"Function", "Type", "Memory Type"}), package);
+    addField("Technology", parameterValue(item, {"Technology"}));
+    addField("Interface", parameterValue(item, {"Interface", "Memory Interface"}));
+    addField("Operating Voltage", parameterValue(item, {"Voltage - Supply", "Voltage - Supply (Min/Max)"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+    addField("Mounting Type", parameterValue(item, {"Mounting Type"}));
+    addField("DigiKey Programmable", parameterValue(item, {"DigiKey Programmable"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"inductor", "choke", "coil"})) {
+    addValueAndPackage("Inductance", parameterValue(item, {"Inductance", "Value"}), package);
+    addField("Current Rating", parameterValue(item, {"Current Rating", "Current Rating (Amps)", "Current"}));
+    addField("DC Resistance", parameterValue(item, {"DC Resistance", "DC Resistance (DCR)", "DCR"}));
+    addField("Saturation Current", parameterValue(item, {"Saturation Current", "Current - Saturation (Isat)"}));
+    addField("Q @ Freq", parameterValue(item, {"Q @ Freq"}));
+    addField("Frequency", parameterValue(item, {"Frequency - Self Resonant", "Frequency"}));
+    addField("Shielding", parameterValue(item, {"Shielding"}));
+    addField("Material", parameterValue(item, {"Material - Core"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"diode", "rectifier", "schottky"})) {
+    addValueAndPackage("Forward Voltage", parameterValue(item, {"Forward Voltage", "Voltage - Forward (Vf) (Max) @ If", "Vf"}), package);
+    addField("Reverse Voltage", parameterValue(item, {"Reverse Voltage", "Voltage - DC Reverse (Vr) (Max)", "Peak Reverse Voltage", "Vr"}));
+    addField("Current", parameterValue(item, {"Current", "Current - Average Rectified (Io)", "If", "Forward Current"}));
+    addField("Technology", parameterValue(item, {"Technology"}));
+    addField("Speed", parameterValue(item, {"Speed"}));
+    addField("Reverse Leakage", parameterValue(item, {"Current - Reverse Leakage @ Vr"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature - Junction", "Operating Temperature"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"transistor", "mosfet", "fet", "discrete semiconductor"})) {
+    addValueAndPackage("Drain-Source Voltage",
+                       parameterValue(item, {"Drain-Source Voltage", "Drain to Source Voltage (Vdss)", "Vds", "Vdss"}), package);
+    addField("Current", parameterValue(item, {"Continuous Drain Current", "Current - Continuous Drain (Id) @ 25°C", "Current", "Id"}));
+    addField("RDS On", parameterValue(item, {"Rds On", "Rds On (Max) @ Id, Vgs", "RDS(ON)"}));
+    addField("Gate Charge", parameterValue(item, {"Gate Charge", "Gate Charge (Qg) (Max) @ Vgs"}));
+    addField("Drive Voltage", parameterValue(item, {"Drive Voltage", "Drive Voltage (Max Rds On, Min Rds On)"}));
+    addField("VGS", parameterValue(item, {"Vgs", "Vgs (Max)", "Vgs(th) (Max) @ Id"}));
+    addField("Input Capacitance", parameterValue(item, {"Input Capacitance (Ciss) (Max) @ Vds", "Input Capacitance"}));
+    addField("Power - Max", parameterValue(item, {"Power - Max"}));
+    addField("Technology", parameterValue(item, {"Technology"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"connector"})) {
+    addValueAndPackage("Pins", parameterValue(item, {"Pins", "Number of Positions", "Pin Count"}), package);
+    addField("Connector Type", parameterValue(item, {"Connector Type"}));
+    addField("Contact Type", parameterValue(item, {"Contact Type"}));
+    addField("Rows", parameterValue(item, {"Rows", "Number of Rows"}));
+    addField("Pitch", parameterValue(item, {"Pitch", "Pitch - Mating"}));
+    addField("Mounting Type", parameterValue(item, {"Mounting Type"}));
+    addField("Termination", parameterValue(item, {"Termination"}));
+    addField("Fastening Type", parameterValue(item, {"Fastening Type"}));
+    addField("Shrouding", parameterValue(item, {"Shrouding"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"mcu", "microcontroller"})) {
+    addValueAndPackage("Flash", parameterValue(item, {"Flash"}), package);
+    addField("Core", parameterValue(item, {"Core", "Core Processor"}));
+    addField("Operating Voltage", parameterValue(item, {"Operating Voltage", "Voltage - Supply", "Voltage"}));
+    addField("RAM", parameterValue(item, {"RAM", "Memory"}));
+    addField("Clock", parameterValue(item, {"Clock Speed", "Speed"}));
+    addField("I/O", parameterValue(item, {"Number of I/O"}));
+    addField("Program Memory", parameterValue(item, {"Program Memory Size", "Program Memory Type"}));
+    addField("EEPROM", parameterValue(item, {"EEPROM Size"}));
+    addField("Connectivity", parameterValue(item, {"Connectivity"}));
+    addField("Peripherals", parameterValue(item, {"Peripherals"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"regulator", "voltage regulator", "power management"})) {
+    addValueAndPackage("Output Voltage", parameterValue(item, {"Output Voltage", "Voltage - Output", "Vout"}), package);
+    addField("Input Voltage", parameterValue(item, {"Voltage - Input", "Vin"}));
+    addField("Current", parameterValue(item, {"Output Current", "Current - Output", "Iout"}));
+    addField("Type", parameterValue(item, {"Type", "Output Type"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"crystal", "oscillator", "resonator"})) {
+    addValueAndPackage("Frequency", parameterValue(item, {"Frequency"}), package);
+    addField("Load Capacitance", parameterValue(item, {"Load Capacitance"}));
+    addField("ESR", parameterValue(item, {"ESR", "Equivalent Series Resistance"}));
+    addField("Operating Mode", parameterValue(item, {"Operating Mode"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+    addField("Size / Dimension", parameterValue(item, {"Size / Dimension"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"sensor", "temperature sensor", "pressure sensor"})) {
+    addValueAndPackage("Type", parameterValue(item, {"Type"}), package);
+    addField("Sensor Type", parameterValue(item, {"Sensor Type"}));
+    addField("Output", parameterValue(item, {"Output", "Output Type"}));
+    addField("Voltage - Supply", parameterValue(item, {"Voltage - Supply"}));
+    addField("Resolution", parameterValue(item, {"Resolution"}));
+    addField("Accuracy", parameterValue(item, {"Accuracy - Highest (Lowest)"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+    addField("Features", parameterValue(item, {"Features"}));
+    return fields;
+  }
+
+  if (categoryContains(item, {"circuit protection", "fuse", "tvs", "transient voltage suppressor"})) {
+    addValueAndPackage("Current Rating", parameterValue(item, {"Current Rating (Amps)", "Current Rating", "Current"}), package);
+    addField("Voltage AC", parameterValue(item, {"Voltage Rating - AC"}));
+    addField("Voltage DC", parameterValue(item, {"Voltage Rating - DC"}));
+    addField("Reverse Standoff", parameterValue(item, {"Voltage - Reverse Standoff (Typ)"}));
+    addField("Breakdown", parameterValue(item, {"Voltage - Breakdown (Min)"}));
+    addField("Clamping", parameterValue(item, {"Voltage - Clamping (Max) @ Ipp"}));
+    addField("Peak Pulse Current", parameterValue(item, {"Current - Peak Pulse (10/1000µs)"}));
+    addField("Peak Pulse Power", parameterValue(item, {"Power - Peak Pulse"}));
+    addField("Response Time", parameterValue(item, {"Response Time"}));
+    addField("Operating Temperature", parameterValue(item, {"Operating Temperature"}));
+    return fields;
+  }
+
+  std::optional<std::string> primaryValue;
+  std::optional<std::string> primaryLabel;
+  for (const auto& parameter : item.parameters) {
+    const auto label = prettyLabel(parameter.name);
+    if (normalizeKey(label) == "package") {
+      continue;
+    }
+    if (!primaryValue) {
+      primaryLabel = label;
+      primaryValue = trim(parameter.value);
+      continue;
+    }
+    addField(label, trim(parameter.value));
+  }
+
+  if (primaryValue && !primaryValue->empty()) {
+    fields.insert(fields.begin(),
+                  DetailField{primaryLabel.value_or("Value") + ": ", *primaryValue, uiLabelColor(), uiTitleColor()});
+  } else if (package && !package->empty()) {
+    fields.insert(fields.begin(), DetailField{"Package: ", *package, uiLabelColor(), uiTitleColor()});
+  }
+
+  return fields;
+}
+
+std::vector<DetailField> stockPreviewFields(const InventoryItem& item) {
+  std::vector<DetailField> fields;
+  fields.push_back({"Name: ", item.partName, uiInfoColor(), uiTitleColor()});
+  fields.push_back({"Manufacturer: ", item.manufacturer, uiInfoColor(), uiTitleColor()});
+  fields.push_back({"Quantity: ", std::to_string(item.quantity), uiSuccessColor(), uiTitleColor()});
+
+  const auto electricalFields = electricalFieldsForItem(item);
+  fields.insert(fields.end(), electricalFields.begin(), electricalFields.end());
+  return fields;
+}
+
+std::vector<DetailField> detailCoreFields(const InventoryItem& item) {
+  return {
+      {"Name: ", item.partName, uiInfoColor(), uiTitleColor()},
+      {"Manufacturer: ", item.manufacturer, uiInfoColor(), uiTitleColor()},
+      {"Category: ", displayCategory(item.category), uiLabelColor(), uiTitleColor()},
+      {"Quantity: ", std::to_string(item.quantity), uiSuccessColor(), uiTitleColor()},
+      {"Threshold: ", std::to_string(item.reorderThreshold), uiWarnColor(), uiTitleColor()},
+      {"Location: ", item.location, uiMutedColor(), uiTitleColor()},
+  };
+}
+
+ftxui::Element detailFieldLine(const DetailField& field, int width) {
+  const int valueWidth = std::max(0, width - static_cast<int>(field.label.size()) - 1);
+  return ftxui::hbox({
+             styledText(field.label, field.labelColor),
+             styledText(ellipsize(field.value, static_cast<std::size_t>(valueWidth)), field.valueColor),
+             ftxui::filler(),
+         }) |
+         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, width);
+}
+
+bool upsertParameter(std::vector<Parameter>& parameters, const std::string& name, const std::string& value) {
+  const auto trimmedValue = trim(value);
+  if (trimmedValue.empty()) {
+    return false;
+  }
+
+  for (auto& parameter : parameters) {
+    if (parameterLabelMatches(parameter.name, name)) {
+      if (parameter.name.empty()) {
+        parameter.name = name;
+      }
+      const bool changed = parameter.value != trimmedValue;
+      parameter.value = trimmedValue;
+      return changed;
+    }
+  }
+
+  parameters.push_back({name, trimmedValue});
+  return true;
+}
+
+bool mergeDigiKeyMetadata(InventoryItem& item, const DigiKeyProductDetails& details) {
+  bool changed = false;
+
+  const auto normalizePackageLabels = [&]() {
+    for (auto& parameter : item.parameters) {
+      if (parameterLabelMatches(parameter.name, "Package") && looksLikePackagingValue(parameter.value)) {
+        parameter.name = "Packaging";
+        changed = true;
+      }
+    }
+  };
+  normalizePackageLabels();
+
+  const auto assignIfUseful = [&](std::string& target, const std::string& value, bool replaceUnknown = false) {
+    const auto trimmed = trim(value);
+    if (trimmed.empty()) {
+      return;
+    }
+    if (target.empty() || (replaceUnknown && (target == "Unknown" || target == "Scanned DigiKey Item"))) {
+      target = trimmed;
+      changed = true;
+    }
+  };
+
+  if ((item.partName.empty() || item.partName == "Scanned DigiKey Item") && !trim(details.productDescription).empty()) {
+    item.partName = trim(details.productDescription);
+    changed = true;
+  }
+
+  assignIfUseful(item.manufacturer, details.manufacturerName, true);
+  assignIfUseful(item.sku, details.manufacturerPartNumber);
+  assignIfUseful(item.productUrl, details.productUrl);
+  assignIfUseful(item.datasheetUrl, details.datasheetUrl);
+
+  for (const auto& parameter : details.parameters) {
+    if (upsertParameter(item.parameters, parameter.name, parameter.value)) {
+      changed = true;
+    }
+  }
+
+  if (!trim(details.packagingType).empty()) {
+    if (upsertParameter(item.parameters, "Packaging", details.packagingType)) {
+      changed = true;
+    }
+  }
+
+  if (!details.packageName.empty()) {
+    if (upsertParameter(item.parameters, "Package", details.packageName)) {
+      changed = true;
+    }
+  }
+
+  if (item.syncStatus != "synced") {
+    item.syncStatus = "synced";
+    changed = true;
+  }
+
+  if (changed) {
+    item.lastUpdated = std::time(nullptr);
+  }
+
+  return changed;
 }
 
 std::filesystem::path documentsHimsPath() {
@@ -412,6 +876,23 @@ void ensureInventoryDatabaseCopied(const std::filesystem::path& localBase) {
   copyDatabaseSidecar(sourceBase, localBase, "-shm");
 }
 
+std::filesystem::path locateDotEnvFile() {
+  std::error_code error;
+  auto current = std::filesystem::current_path();
+  for (int depth = 0; depth < 8 && !current.empty(); ++depth) {
+    const auto candidate = current / ".env";
+    if (std::filesystem::exists(candidate, error)) {
+      return candidate;
+    }
+    const auto parent = current.parent_path();
+    if (parent == current) {
+      break;
+    }
+    current = parent;
+  }
+  return {};
+}
+
 }  // namespace
 
 App::App()
@@ -419,6 +900,7 @@ App::App()
       dataPath_(documentsHimsPath()),
       inventoryPath_(dataPath_ / "inventory.db"),
       activityPath_(dataPath_ / "activity.tsv") {
+  loadEnvironmentFile(locateDotEnvFile());
   ensureInventoryDatabaseCopied(inventoryPath_);
   loadState();
 
@@ -436,6 +918,39 @@ void App::loadState() {
     activities_.push_back(makeActivity("system", "Inventory loaded"));
     activities_.push_back(makeActivity("system", "Terminal dashboard initialized"));
   }
+
+  const auto config = loadDigiKeyConfig();
+  if (config.valid()) {
+    DigiKeyApiClient client(std::move(config));
+    std::size_t refreshedCount = 0;
+    std::size_t attemptedCount = 0;
+    for (auto& item : store_.items()) {
+      std::string lookup = !item.digikeyPartNumber.empty() ? item.digikeyPartNumber : item.sku;
+      if (lookup.empty() && !item.manufacturer.empty() && !item.partName.empty()) {
+        lookup = item.manufacturer + " " + item.partName;
+      }
+      if (lookup.empty()) {
+        lookup = item.partName;
+      }
+      if (trim(lookup).empty()) {
+        continue;
+      }
+
+      ++attemptedCount;
+      std::string error;
+      if (const auto details = client.fetchProductDetails(lookup, &error); details.has_value()) {
+        if (mergeDigiKeyMetadata(item, *details)) {
+          ++refreshedCount;
+        }
+      }
+    }
+
+    if (attemptedCount > 0) {
+      activities_.push_back(makeActivity("sync", "DigiKey metadata refreshed for " + std::to_string(refreshedCount) +
+                                                   " of " + std::to_string(attemptedCount) + " parts"));
+    }
+  }
+
   server_.setRecentActivity(activities_);
   saveState();
 }
@@ -545,9 +1060,44 @@ ftxui::Element App::renderDashboardUi() const {
 
 ftxui::Element App::renderStockUi() const {
   const auto filtered = filteredIndices();
+  const auto* activeScreen = ftxui::ScreenInteractive::Active();
+  const int screenWidth = activeScreen != nullptr ? activeScreen->dimx() : 120;
+  const int detailOuterWidth = std::clamp(screenWidth / 4, 38, 52);
+  const int listOuterWidth = std::max(40, screenWidth - detailOuterWidth - 1);
+  const int listInnerWidth = std::max(20, listOuterWidth - 2);
+  const int detailInnerWidth = std::max(20, detailOuterWidth - 2);
+  const int qtyWidth = 10;
+  int partWidth = std::clamp(listInnerWidth / 3, 22, 34);
+  int categoryWidth = listInnerWidth - partWidth - qtyWidth - 2;
+  if (categoryWidth < 12) {
+    categoryWidth = 12;
+    partWidth = std::max(18, listInnerWidth - categoryWidth - qtyWidth - 2);
+  }
+  if (partWidth < 18) {
+    partWidth = 18;
+  }
+
+  auto fixedCell = [](const std::string& text, int width, ftxui::Color color) {
+    return ftxui::hbox({
+               styledText(ellipsize(text, static_cast<std::size_t>(std::max(width, 0))), color),
+               ftxui::filler(),
+           }) |
+           ftxui::size(ftxui::WIDTH, ftxui::EQUAL, width);
+  };
 
   ftxui::Elements listRows;
-  listRows.push_back(fullLine("Part                          Category       Qty", uiMutedColor(), uiPanelLeftBg()));
+  listRows.push_back(ftxui::hbox({
+                         fixedCell("Part", partWidth, uiMutedColor()),
+                         ftxui::separator() | ftxui::color(uiDimColor()),
+                         fixedCell("Category", categoryWidth, uiMutedColor()),
+                         ftxui::filler(),
+                         ftxui::hbox({
+                             ftxui::filler(),
+                             styledText("Qty", uiMutedColor()),
+                         }) |
+                             ftxui::size(ftxui::WIDTH, ftxui::EQUAL, qtyWidth),
+                     }) |
+                     ftxui::bgcolor(uiPanelLeftBg()));
 
   if (filtered.empty()) {
     listRows.push_back(fullLine("No items match \"" + searchQuery_ + "\".", uiMutedColor(), uiPanelLeftBg()));
@@ -558,9 +1108,19 @@ ftxui::Element App::renderStockUi() const {
       const bool lowStock = item.lowStock();
       const auto bg = selected ? uiRowSelectedBg() : (index % 2 == 0 ? uiRowDarkBg() : uiRowLightBg());
       const auto fg = selected ? uiTitleColor() : (lowStock ? uiWarnColor() : uiMutedColor());
-      auto row = fullLine("  " + padRight(item.partName, 28) + "  " + padRight(item.category, 11) + " " +
-                              padRight(std::to_string(item.quantity), 4),
-                          fg, bg);
+      const auto category = displayCategory(item.category);
+      auto row = ftxui::hbox({
+                     fixedCell("  " + item.partName, partWidth, fg),
+                     ftxui::separator() | ftxui::color(uiDimColor()),
+                     fixedCell(category, categoryWidth, selected ? uiTitleColor() : uiLabelColor()),
+                     ftxui::filler(),
+                     ftxui::hbox({
+                         ftxui::filler(),
+                         quantityBadge(item.quantity, selected),
+                     }) |
+                         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, qtyWidth),
+                 }) |
+                 ftxui::bgcolor(bg);
       if (selected) {
         row = row | ftxui::select;
       }
@@ -570,38 +1130,30 @@ ftxui::Element App::renderStockUi() const {
 
   ftxui::Elements detailRows;
   if (const auto* item = selectedItem()) {
-    detailRows.push_back(fullLine("Core details", uiAccentColor(), uiPanelRightBg()));
-    detailRows.push_back(bulletLine("Name: ", item->partName, uiInfoColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Manufacturer: ", item->manufacturer, uiInfoColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Category: ", item->category, uiLabelColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Quantity: ", std::to_string(item->quantity), uiSuccessColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Threshold: ", std::to_string(item->reorderThreshold), uiWarnColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Location: ", item->location, uiMutedColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Tags: ", renderTags(item->tags), uiLabelColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Parameters: ", renderParameters(item->parameters), uiInfoColor(), uiTitleColor()));
-    detailRows.push_back(ftxui::separator());
-    detailRows.push_back(fullLine("Metadata", uiAccentColor(), uiPanelRightBg()));
-    detailRows.push_back(bulletLine("DigiKey: ", renderUrl(item->digikeyPartNumber), uiLinkColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Datasheet: ", renderUrl(item->datasheetUrl), uiLinkColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Product: ", renderUrl(item->productUrl), uiLinkColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("SKU: ", renderUrl(item->sku), uiLabelColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Status: ", item->syncStatus, uiSuccessColor(), uiTitleColor()));
-    detailRows.push_back(bulletLine("Updated: ", nowTimestampString(item->lastUpdated), uiMutedColor(), uiTitleColor()));
-    detailRows.push_back(ftxui::separator());
-    detailRows.push_back(fullLine("Notes", uiWarnColor(), uiPanelRightBg()));
-    detailRows.push_back(ftxui::paragraphAlignLeft(item->notes) | ftxui::color(uiMutedColor()));
+    detailRows.push_back(fullLine("Part summary", uiAccentColor(), uiPanelRightBg()));
+    const auto electricalFields = electricalFieldsForItem(*item);
+    const auto previewFields = stockPreviewFields(*item);
+    for (std::size_t index = 0; index < previewFields.size(); ++index) {
+      const auto& field = previewFields[index];
+      if (index == 3 && !electricalFields.empty()) {
+        detailRows.push_back(ftxui::separator());
+        detailRows.push_back(fullLine("Electrical parameters", uiAccentColor(), uiPanelRightBg()));
+      }
+      detailRows.push_back(detailFieldLine(field, detailInnerWidth));
+    }
   } else {
     detailRows.push_back(fullLine("No item selected.", uiMutedColor(), uiPanelRightBg()));
   }
 
-  auto listContent = ftxui::vbox(std::move(listRows)) | ftxui::frame | ftxui::vscroll_indicator;
+  auto listContent = ftxui::vbox(std::move(listRows)) | ftxui::yframe | ftxui::vscroll_indicator;
   auto listPanel = ftxui::window(styledText("Items", uiAccentColor()), std::move(listContent)) |
-                   ftxui::bgcolor(uiPanelLeftBg()) | ftxui::flex;
-  auto detailPanel = panel("Detail", std::move(detailRows), uiAccentColor()) | ftxui::bgcolor(uiPanelRightBg()) | ftxui::flex;
+                   ftxui::bgcolor(uiPanelLeftBg()) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, listOuterWidth);
+  auto detailPanel = panel("Detail", std::move(detailRows), uiAccentColor()) | ftxui::bgcolor(uiPanelRightBg()) |
+                     ftxui::size(ftxui::WIDTH, ftxui::EQUAL, detailOuterWidth);
 
   return ftxui::hbox({
       listPanel,
-      ftxui::separator(),
+      ftxui::separator() | ftxui::color(uiDimColor()),
       detailPanel,
   });
 }
@@ -611,15 +1163,22 @@ ftxui::Element App::renderDetailUi() const {
   ftxui::Elements rightRows;
 
   if (const auto* item = selectedItem()) {
+    const auto electricalFields = electricalFieldsForItem(*item);
     leftRows.push_back(fullLine("Core details", uiAccentColor(), uiPanelLeftBg()));
-    leftRows.push_back(bulletLine("Name: ", item->partName, uiInfoColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Manufacturer: ", item->manufacturer, uiInfoColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Category: ", item->category, uiLabelColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Quantity: ", std::to_string(item->quantity), uiSuccessColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Threshold: ", std::to_string(item->reorderThreshold), uiWarnColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Location: ", item->location, uiMutedColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Tags: ", renderTags(item->tags), uiLabelColor(), uiTitleColor()));
-    leftRows.push_back(bulletLine("Parameters: ", renderParameters(item->parameters), uiInfoColor(), uiTitleColor()));
+    for (const auto& field : detailCoreFields(*item)) {
+      leftRows.push_back(detailFieldLine(field, 40));
+    }
+    if (!electricalFields.empty()) {
+      leftRows.push_back(ftxui::separator());
+      leftRows.push_back(fullLine("Electrical parameters", uiAccentColor(), uiPanelLeftBg()));
+      for (const auto& field : electricalFields) {
+        leftRows.push_back(detailFieldLine(field, 40));
+      }
+    }
+    if (!item->tags.empty()) {
+      leftRows.push_back(ftxui::separator());
+      leftRows.push_back(detailFieldLine({"Tags: ", renderTags(item->tags), uiLabelColor(), uiTitleColor()}, 40));
+    }
 
     rightRows.push_back(fullLine("Metadata", uiAccentColor(), uiPanelRightBg()));
     rightRows.push_back(bulletLine("DigiKey: ", renderUrl(item->digikeyPartNumber), uiLinkColor(), uiTitleColor()));
@@ -689,12 +1248,28 @@ ftxui::Element App::renderMessageUi() const {
 int App::run() {
   running_ = true;
   auto screen = ftxui::ScreenInteractive::Fullscreen();
+  screen.TrackMouse();
   auto renderer = ftxui::Renderer([this] { return renderUi(); });
   auto component = ftxui::CatchEvent(renderer, [this, &screen](ftxui::Event event) {
     if (event == ftxui::Event::Custom) {
       processScans();
       clearMessageIfExpired();
       return true;
+    }
+
+    if (event.is_mouse()) {
+      if (page_ == Page::Stock) {
+        const auto& mouse = event.mouse();
+        if (mouse.button == ftxui::Mouse::WheelUp) {
+          moveSelection(-1);
+          return true;
+        }
+        if (mouse.button == ftxui::Mouse::WheelDown) {
+          moveSelection(1);
+          return true;
+        }
+      }
+      return false;
     }
 
     const auto key = translateEvent(event);
@@ -1315,26 +1890,11 @@ void App::renderStock(std::ostringstream& out, const ConsoleSize& size) {
     if (line.isMessage) {
       return styleCell(line.text, detailWidth, kColorMuted, kBgPanelRight);
     }
-    if (line.text.rfind("Name: ", 0) == 0 || line.text.rfind("Manufacturer: ", 0) == 0 ||
-        line.text.rfind("Category: ", 0) == 0) {
-      return styleCell(line.text, detailWidth, kColorInfo, kBgPanelRight);
-    }
-    if (line.text.rfind("Quantity: ", 0) == 0 || line.text.rfind("Threshold: ", 0) == 0 ||
-        line.text.rfind("Status: ", 0) == 0) {
+    if (line.text.rfind("Quantity: ", 0) == 0) {
       return styleCell(line.text, detailWidth, kColorSuccess, kBgPanelRight);
     }
-    if (line.text.rfind("DigiKey: ", 0) == 0 || line.text.rfind("Datasheet: ", 0) == 0 ||
-        line.text.rfind("Product: ", 0) == 0) {
-      return styleCell(line.text, detailWidth, kColorLink, kBgPanelRight);
-    }
-    if (line.text.rfind("SKU: ", 0) == 0 || line.text.rfind("Updated: ", 0) == 0) {
-      return styleCell(line.text, detailWidth, kColorLabel, kBgPanelRight);
-    }
-    if (line.text == "Notes") {
-      return styleCell(line.text, detailWidth, kColorWarn, kBgPanelRight);
-    }
-    if (line.text == "Shortcuts") {
-      return styleCell(line.text, detailWidth, kColorDim, kBgPanelRight);
+    if (line.text.find(": ") != std::string::npos) {
+      return styleCell(line.text, detailWidth, kColorInfo, kBgPanelRight);
     }
     return styleCell(line.text, detailWidth, kColorMuted, kBgPanelRight);
   };
@@ -1369,15 +1929,22 @@ void App::renderDetail(std::ostringstream& out, const ConsoleSize& size) {
   if (size.columns < 96) {
     if (const auto* item = selectedItem()) {
       std::vector<std::string> lines;
+      const auto electricalFields = electricalFieldsForItem(*item);
       lines.push_back(styleText("Core details", kColorAccent));
-      lines.push_back(styleText("  Name: " + item->partName, kColorInfo));
-      lines.push_back(styleText("  Manufacturer: " + item->manufacturer, kColorInfo));
-      lines.push_back(styleText("  Category: " + item->category, kColorLabel));
-      lines.push_back(styleText("  Quantity: " + std::to_string(item->quantity), kColorSuccess));
-      lines.push_back(styleText("  Threshold: " + std::to_string(item->reorderThreshold), kColorWarn));
-      lines.push_back(styleText("  Location: " + item->location, kColorMuted));
-      lines.push_back(styleText("  Tags: " + renderTags(item->tags), kColorLabel));
-      lines.push_back(styleText("  Parameters: " + renderParameters(item->parameters), kColorInfo));
+      for (const auto& field : detailCoreFields(*item)) {
+        lines.push_back(styleText("  " + field.label + field.value, kColorInfo));
+      }
+      if (!electricalFields.empty()) {
+        lines.push_back("");
+        lines.push_back(styleText("Electrical parameters", kColorAccent));
+        for (const auto& field : electricalFields) {
+          lines.push_back(styleText("  " + field.label + field.value, kColorInfo));
+        }
+      }
+      if (!item->tags.empty()) {
+        lines.push_back("");
+        lines.push_back(styleText("Tags: " + renderTags(item->tags), kColorLabel));
+      }
       lines.push_back("");
       lines.push_back(styleText("Metadata", kColorAccent));
       lines.push_back(styleText("  DigiKey: " + renderUrl(item->digikeyPartNumber), kColorLink));
@@ -1402,22 +1969,29 @@ void App::renderDetail(std::ostringstream& out, const ConsoleSize& size) {
     return;
   }
 
-  const int leftWidth = std::max(40, (size.columns - 4) / 2);
-  const int rightWidth = std::max(40, size.columns - leftWidth - 4);
+  const int rightWidth = std::max(46, std::min(size.columns - 4, static_cast<int>(size.columns * 0.42)));
+  const int leftWidth = std::max(40, size.columns - rightWidth - 4);
 
   std::vector<std::string> leftLines;
   std::vector<std::string> rightLines;
 
   if (const auto* item = selectedItem()) {
+    const auto electricalFields = electricalFieldsForItem(*item);
     leftLines.push_back("Core details");
-    leftLines.push_back("Name: " + item->partName);
-    leftLines.push_back("Manufacturer: " + item->manufacturer);
-    leftLines.push_back("Category: " + item->category);
-    leftLines.push_back("Quantity: " + std::to_string(item->quantity) + "  Threshold: " +
-                       std::to_string(item->reorderThreshold));
-    leftLines.push_back("Location: " + item->location);
-    leftLines.push_back("Tags: " + renderTags(item->tags));
-    leftLines.push_back("Parameters: " + renderParameters(item->parameters));
+    for (const auto& field : detailCoreFields(*item)) {
+      leftLines.push_back(field.label + field.value);
+    }
+    if (!electricalFields.empty()) {
+      leftLines.push_back("");
+      leftLines.push_back("Electrical parameters");
+      for (const auto& field : electricalFields) {
+        leftLines.push_back(field.label + field.value);
+      }
+    }
+    if (!item->tags.empty()) {
+      leftLines.push_back("");
+      leftLines.push_back("Tags: " + renderTags(item->tags));
+    }
 
     rightLines.push_back("Metadata");
     rightLines.push_back("DigiKey: " + renderUrl(item->digikeyPartNumber));
@@ -1878,24 +2452,9 @@ std::vector<App::FieldOption> App::fieldOptions() const {
 
 std::string App::itemDetailText(const InventoryItem& item, int width) const {
   std::ostringstream out;
-  const auto lines = {
-      std::string("Name: ") + item.partName,
-      std::string("Manufacturer: ") + item.manufacturer,
-      std::string("Category: ") + item.category,
-      std::string("Quantity: ") + std::to_string(item.quantity) + "  Threshold: " + std::to_string(item.reorderThreshold),
-      std::string("Location: ") + item.location,
-      std::string("Tags: ") + renderTags(item.tags),
-      std::string("Parameters: ") + renderParameters(item.parameters),
-      std::string("DigiKey: ") + renderUrl(item.digikeyPartNumber),
-      std::string("Datasheet: ") + renderUrl(item.datasheetUrl),
-      std::string("Product: ") + renderUrl(item.productUrl),
-      std::string("SKU: ") + renderUrl(item.sku),
-      std::string("Status: ") + item.syncStatus,
-      std::string("Updated: ") + nowTimestampString(item.lastUpdated),
-      std::string("Notes: ") + item.notes,
-  };
-
-  for (const auto& line : lines) {
+  const auto fields = stockPreviewFields(item);
+  for (const auto& field : fields) {
+    const auto line = field.label + field.value;
     for (const auto& wrapped : wrapText(line, width)) {
       out << wrapped << '\n';
     }

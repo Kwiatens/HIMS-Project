@@ -28,13 +28,14 @@ add_executable(hims
   src/app.cpp
   src/core/Inventory.cpp
   src/platform/HttpServer.cpp
+  src/platform/DigiKeyApi.cpp
   src/platform/Console.cpp
 )
 
 target_include_directories(hims PRIVATE src)
 
 if(WIN32)
-  target_link_libraries(hims PRIVATE ws2_32 shell32)
+  target_link_libraries(hims PRIVATE ws2_32 shell32 winhttp)
 endif()
 
 target_link_libraries(hims PRIVATE ftxui::screen ftxui::dom ftxui::component)
