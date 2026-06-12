@@ -4,13 +4,16 @@ HIMS is a lightweight, open-source, terminal based Hardware Inventory Management
 
 It is ideal for people who design/assemble PCBs or hardware projects.
 
-## What it does
-
-- Shows a dashboard with inventory health, low-stock alerts, and recent activity.
-- Browses stock in a split-pane master/detail layout.
+## Features
+- Build on TUI (Terminal User Interface) - to make actions quick and easy.
+- Keeps track of all your parts and their quantity.
+- Low/out of stock warnings.
+- Features a DigiKey API integration to display all the parameters about a part.
+- Order import (CSV) from DigiKey.
+- ZPL Label printer integration for custom 'HIMS labels' for use with 'HIMS Scan'.
 - Filters instantly by keyword, category, tag, parameter, quantity, SKU, status, or location.
-- Lets you adjust stock, edit item records, and open DigiKey or datasheet links.
-- Hosts a local scanner page for mobile DigiKey 2D code intake.
+- Lets you adjust stock, edit item records, and open store or datasheet links.
+- Hosts a local scanner page for mobile DigiKey 2D code intake if you haven't build a 'HIMS Scan'
 
 ## Build
 
@@ -49,3 +52,7 @@ If you want to launch the executable directly, it will usually be in `build\Debu
 cmake --build build --target hims_tests
 build\Debug\hims_tests.exe
 ```
+
+The HIMS name, logo, and official product branding are not licensed under the open-source licenses in this repository. They remain trademarks/branding assets of the project owner and may not be used to imply official endorsement or origin.
+
+Copyright © 2026 Paweł Kwiatkowski. All rights reserved.
