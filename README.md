@@ -1,4 +1,5 @@
 # HIMS - Hardware Inventory Managment System Software
+This project is WiP (Work-in-Progress) do not rely on it yet, expect many bugs and unfinished features!
 
 HIMS is a lightweight, open-source, terminal based Hardware Inventory Management System. It keeps track of all the hardware parts you own, alerts you when a part is running out/is out of stock, includes a label printer automation for 'HIMS Scan R1', which allows rapid and easy changes to the part quantity without needing to constantly type stuff on the PC. 
 
