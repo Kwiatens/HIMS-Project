@@ -15,12 +15,19 @@ ScanResolution resolveScanCode(InventoryStore& store, const string& rawCode) {
     return {false, false, {}, "Empty scan code"};
   }
 
-  if (auto* existing = store.findByCode(code)) {
-    return {true, false, existing->id, "Matched existing item"};
+  if (isMachineCode(code)) {
+    if (auto* existing = store.findByMachineCode(code)) {
+      return {true, false, existing->id, "Matched existing item"};
+    }
+    return {false, false, {}, "Unknown machine code"};
   }
 
   if (toLower(code).rfind("hims:", 0) == 0) {
     return {false, false, {}, "Unknown HIMS ID"};
+  }
+
+  if (auto* existing = store.findByCode(code)) {
+    return {true, false, existing->id, "Matched existing item"};
   }
 
   InventoryItem item;

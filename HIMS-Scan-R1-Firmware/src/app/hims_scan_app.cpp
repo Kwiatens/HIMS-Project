@@ -67,8 +67,8 @@ void HimsScanApp::pollScanner() {
 
 void HimsScanApp::handleScan(const String& code) {
   // Some GM65 profiles prepend an AIM symbology identifier (for example ]C1
-  // for Code 128 or ]Q3 for QR). Normalize that away before handing the code
-  // to the rest of the app.
+  // for Code 128, ]Q3 for QR, or ]d2 for Data Matrix). Normalize that away
+  // before handing the code to the rest of the app.
   const auto trimmed = trimCopy(stripAimSymbologyPrefix(code));
   if (trimmed.length() == 0) {
     return;

@@ -1,4 +1,5 @@
 #include "core/Inventory.h"
+#include "core/InventoryInternals.h"
 #include "core/HimsScanProtocol.h"
 #include "import/DigiKeyCsvImport.h"
 #include "label_printer/LabelPrinter.h"
@@ -115,6 +116,8 @@ int main() {
 
   {
     auto items = makeSampleInventory();
+    items[0].machineCode = "0002";
+    items[1].machineCode = "0003";
     InventoryStore store;
     store.items() = items;
 
@@ -122,6 +125,19 @@ int main() {
     assert(resolution.matched);
     assert(!resolution.created);
     assert(resolution.itemId == "res-0603-10k");
+
+    const auto machineResolution = resolveScanCode(store, "0002");
+    assert(machineResolution.matched);
+    assert(!machineResolution.created);
+    assert(machineResolution.itemId == "res-0603-10k");
+
+    const auto rejected = resolveScanCode(store, "HIMS:R-0002");
+    assert(!rejected.matched);
+    assert(rejected.message == "Unknown HIMS ID");
+
+    const auto unknownMachine = resolveScanCode(store, "9999");
+    assert(!unknownMachine.matched);
+    assert(unknownMachine.message == "Unknown machine code");
 
     const auto created = resolveScanCode(store, "new-digikey-code");
     assert(created.matched);
@@ -144,14 +160,48 @@ int main() {
     capacitor.partName = "10uF capacitor";
     capacitor.category = "Capacitors";
     capacitor.himsId = "HIMS:C-00127";
+    capacitor.machineCode = "0002";
     capacitor.lastUpdated = 1710001000;
     items.push_back(capacitor);
+
+    InventoryItem diode;
+    diode.id = "diode-1";
+    diode.partName = "Schottky diode";
+    diode.category = "Diodes";
+    diode.lastUpdated = 1710002000;
+    items.push_back(diode);
 
     ensureInventoryIdentifiers(items);
     assert(isHimsId(items[0].himsId));
     assert(items[0].himsId.find("HIMS:R-") == 0);
     assert(items[0].createdAt != 0);
     assert(items[1].himsId == "HIMS:C-00127");
+    assert(items[0].machineCode == "0001");
+    assert(items[1].machineCode == "0002");
+    assert(items[2].machineCode == "0003");
+    assert(buildVisibleHimsId(items[1]) == "HIMS:C-0002");
+  }
+
+  {
+    vector<InventoryItem> items;
+    InventoryItem first;
+    first.id = "dup-1";
+    first.category = "Diodes";
+    first.machineCode = "0002";
+    first.lastUpdated = 1710003000;
+    items.push_back(first);
+
+    InventoryItem second;
+    second.id = "dup-2";
+    second.category = "Diodes";
+    second.machineCode = "0002";
+    second.lastUpdated = 1710004000;
+    items.push_back(second);
+
+    ensureInventoryIdentifiers(items);
+    assert(items[0].machineCode != items[1].machineCode);
+    assert(items[0].machineCode != "0002");
+    assert(items[1].machineCode != "0002");
   }
 
   {
@@ -172,6 +222,7 @@ int main() {
     item.syncStatus = "synced";
     item.sku = "SKU-1";
     item.lastUpdated = 1710000000;
+    item.machineCode = "0002";
 
     const auto line = serializeItem(item);
     InventoryItem restored;
@@ -180,6 +231,28 @@ int main() {
     assert(restored.parameters.size() == 2);
     assert(restored.tags.size() == 2);
     assert(restored.himsId == item.himsId);
+    assert(restored.machineCode == item.machineCode);
+  }
+
+  {
+    const auto tempPath = filesystem::temp_directory_path() / "hims-machine-code-roundtrip.db";
+    InventoryStore store;
+    InventoryItem item;
+    item.id = "roundtrip-1";
+    item.partName = "Roundtrip part";
+    item.manufacturer = "Acme";
+    item.category = "Diodes";
+    item.quantity = 1;
+    item.lastUpdated = 1710000000;
+    item.machineCode = "0002";
+    store.items().push_back(item);
+
+    assert(store.save(tempPath));
+    InventoryStore loaded;
+    assert(loaded.load(tempPath));
+    assert(!loaded.items().empty());
+    assert(loaded.items().front().machineCode == "0002");
+    filesystem::remove(tempPath);
   }
 
   {
@@ -252,6 +325,7 @@ int main() {
     item.lastUpdated = 1710000000;
     item.createdAt = 1710000000;
     item.himsId = "HIMS:R-00123";
+    item.machineCode = "0002";
     item.sku = "RC0603FR-0710KL";
     item.digikeyPartNumber = "311-10.0KHRCT-ND";
     item.parameters = {{"Resistance", "10k Ohm"}, {"Tolerance", "1%"}, {"Power Dissipation", "0.125W"}};
@@ -267,8 +341,8 @@ int main() {
     assert(plan.parameterLine2.find("Pwr") != string::npos);
     assert(plan.parameterLine3.empty());
     assert(plan.himsId == "HIMS:R-00123");
-    assert(plan.scannerHint == "R-0123");
-    assert(plan.barcodeHint == "R123");
+    assert(plan.scannerHint == "HIMS:R-0002");
+    assert(plan.barcodeHint == "0002");
     const auto zpl = service.buildZpl(item);
     assert(!zpl.empty());
     assert(zpl.find("10kOhms") == string::npos);
@@ -277,16 +351,17 @@ int main() {
     assert(zpl.find("^FDResistor^FS") != string::npos);
     assert(zpl.find("^FDPwr 0.125W^FS") != string::npos);
     assert(zpl.find("^FO10,100^A0N,16,16^FDYageo^FS") != string::npos);
-    assert(zpl.find("^FO220,9^BCR,58,N,N,N,N^FDR123^FS") != string::npos);
-    assert(zpl.find("^FO200,55^A0R,13,13^FDR-0123^FS") != string::npos);
-    assert(zpl.find("^BX") == string::npos);
+    assert(zpl.find("^BQN,2,2") != string::npos);
+    assert(zpl.find("^FDLA,0002^FS") != string::npos);
+    assert(zpl.find("^FO200,55^A0R,13,13^FDHIMS:R-0002^FS") != string::npos);
+    assert(zpl.find("^BC") == string::npos);
 
     string error;
     assert(service.printItemLabel(item, &error));
     assert(error.empty());
     assert(backendPtr->lastPrinterName_ == "ZDesigner LP 2824 Plus (ZPL)");
     assert(backendPtr->lastJobName_.find("HIMS Label") == 0);
-    assert(backendPtr->lastZpl_.find("^FDR123^FS") != string::npos);
+    assert(backendPtr->lastZpl_.find("^FDLA,0002^FS") != string::npos);
 
     InventoryItem tvsDiode;
     tvsDiode.id = "tvs-1";
@@ -500,31 +575,30 @@ int main() {
     DeviceQuantityRequest request;
     string error;
     assert(parseQuantityRequestJson(
-        R"({"deviceId":"r1-a","requestId":"req-1","code":"HIMS:R-00123","delta":-12})", request, error));
+        R"({"deviceId":"r1-a","requestId":"req-1","code":"0002","delta":-12})", request, error));
     assert(request.delta == -12);
     assert(!parseQuantityRequestJson(
-        R"({"deviceId":"r1-a","requestId":"req-2","code":"HIMS:R-00123","delta":0})", request, error));
+        R"({"deviceId":"r1-a","requestId":"req-2","code":"0002","delta":0})", request, error));
 
     InventoryStore store;
     InventoryItem item;
     item.id = "scan-r1-item";
     item.himsId = "HIMS:R-00123";
+    item.machineCode = "0002";
     item.partName = "10k resistor";
     item.quantity = 5;
     store.items().push_back(item);
-    request = {"r1-a", "req-3", "HIMS:R-00123", -12};
+    request = {"r1-a", "req-3", "0002", -12};
     const auto clamped = applyDeviceQuantity(store, request);
     assert(clamped.ok);
     assert(clamped.requestedDelta == -12);
     assert(clamped.appliedDelta == -5);
     assert(clamped.quantity == 0);
-    request = {"r1-a", "req-4", "R123", 2};
-    assert(applyDeviceQuantity(store, request).httpStatus == 200);
-    request = {"r1-a", "req-5", "0123", 2};
-    assert(applyDeviceQuantity(store, request).httpStatus == 200);
-    request = {"r1-a", "req-6", "HIMS:R-99999", 2};
-    assert(applyDeviceQuantity(store, request).httpStatus == 404);
-    request = {"r1-a", "req-7", "308-1571-1-ND", 2};
+    request = {"r1-a", "req-4", "HIMS:R-0002", 2};
+    assert(applyDeviceQuantity(store, request).httpStatus == 400);
+    request = {"r1-a", "req-5", "R123", 2};
+    assert(applyDeviceQuantity(store, request).httpStatus == 400);
+    request = {"r1-a", "req-6", "308-1571-1-ND", 2};
     assert(applyDeviceQuantity(store, request).httpStatus == 400);
   }
 
@@ -558,11 +632,12 @@ int main() {
     InventoryItem item;
     item.id = "scan-r1-item";
     item.himsId = "HIMS:R-00123";
+    item.machineCode = "0002";
     item.partName = "10k resistor";
     item.quantity = 5;
     store.items().push_back(item);
 
-    DeviceQuantityRequest request{"r1-a", "req-9", "HIMS:R-00123", -2};
+    DeviceQuantityRequest request{"r1-a", "req-9", "0002", -2};
     unordered_map<string, DeviceQuantityResult> cache;
     deque<string> order;
     const auto first = applyDeviceQuantityCached(store, request, cache, order);

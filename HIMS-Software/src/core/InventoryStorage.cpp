@@ -37,7 +37,8 @@ bool ensureHimsTableSchema(SqliteConnection& connection) {
       sku TEXT NOT NULL,
       last_updated INTEGER NOT NULL,
       hims_id TEXT NOT NULL DEFAULT '',
-      created_at INTEGER NOT NULL DEFAULT 0
+      created_at INTEGER NOT NULL DEFAULT 0,
+      machine_code TEXT NOT NULL DEFAULT ''
     )
   )SQL")) {
     return false;
@@ -50,6 +51,11 @@ bool ensureHimsTableSchema(SqliteConnection& connection) {
   }
   if (!tableColumnExists(connection, "hims_items", "created_at")) {
     if (!execSql(connection, "ALTER TABLE hims_items ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")) {
+      return false;
+    }
+  }
+  if (!tableColumnExists(connection, "hims_items", "machine_code")) {
+    if (!execSql(connection, "ALTER TABLE hims_items ADD COLUMN machine_code TEXT NOT NULL DEFAULT ''")) {
       return false;
     }
   }
@@ -145,7 +151,7 @@ bool loadItemsFromHimsTable(SqliteConnection& connection, vector<InventoryItem>&
   const char* sql = R"SQL(
     SELECT id, part_name, manufacturer, category, quantity, reorder_threshold, location,
            tags, parameters, notes, digikey_part_number, datasheet_url, product_url,
-           sync_status, sku, last_updated, hims_id, created_at
+           sync_status, sku, last_updated, hims_id, created_at, machine_code
     FROM hims_items
     ORDER BY part_name COLLATE NOCASE ASC
   )SQL";
@@ -181,6 +187,7 @@ bool loadItemsFromHimsTable(SqliteConnection& connection, vector<InventoryItem>&
     item.lastUpdated = static_cast<time_t>(sqliteApi().column_int64(statement.stmt, 15));
     item.himsId = sqliteText(statement.stmt, 16);
     item.createdAt = static_cast<time_t>(sqliteApi().column_int64(statement.stmt, 17));
+    item.machineCode = sqliteText(statement.stmt, 18);
     items.push_back(move(item));
   }
 
@@ -229,8 +236,8 @@ bool writeItemsToHimsTable(SqliteConnection& connection, const vector<InventoryI
     INSERT OR REPLACE INTO hims_items (
       id, part_name, manufacturer, category, quantity, reorder_threshold, location,
       tags, parameters, notes, digikey_part_number, datasheet_url, product_url,
-      sync_status, sku, last_updated, hims_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sync_status, sku, last_updated, hims_id, created_at, machine_code
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   )SQL";
 
   if (sqliteApi().prepare_v2(connection.db, sql, -1, &statement.stmt, nullptr) != SQLITE_OK) {
@@ -265,6 +272,7 @@ bool writeItemsToHimsTable(SqliteConnection& connection, const vector<InventoryI
     sqliteApi().bind_int64(statement.stmt, 16, static_cast<sqlite3_int64>(item.lastUpdated));
     sqliteApi().bind_text(statement.stmt, 17, item.himsId.c_str(), -1, SQLITE_TRANSIENT);
     sqliteApi().bind_int64(statement.stmt, 18, static_cast<sqlite3_int64>(item.createdAt));
+    sqliteApi().bind_text(statement.stmt, 19, item.machineCode.c_str(), -1, SQLITE_TRANSIENT);
 
     if (sqliteApi().step(statement.stmt) != SQLITE_DONE) {
       execSql(connection, "ROLLBACK");
@@ -414,8 +422,8 @@ InventoryItem* InventoryStore::findByCode(const string& code) {
   const auto needle = toLower(trim(code));
   const auto it = find_if(items_.begin(), items_.end(), [&](const InventoryItem& item) {
     return toLower(item.id) == needle || toLower(item.himsId) == needle || toLower(item.sku) == needle ||
-           toLower(item.digikeyPartNumber) == needle || containsInsensitive(item.productUrl, needle) ||
-           containsInsensitive(item.datasheetUrl, needle);
+           toLower(item.machineCode) == needle || toLower(item.digikeyPartNumber) == needle ||
+           containsInsensitive(item.productUrl, needle) || containsInsensitive(item.datasheetUrl, needle);
   });
   return it == items_.end() ? nullptr : &(*it);
 }
@@ -424,8 +432,32 @@ const InventoryItem* InventoryStore::findByCode(const string& code) const {
   const auto needle = toLower(trim(code));
   const auto it = find_if(items_.begin(), items_.end(), [&](const InventoryItem& item) {
     return toLower(item.id) == needle || toLower(item.himsId) == needle || toLower(item.sku) == needle ||
-           toLower(item.digikeyPartNumber) == needle || containsInsensitive(item.productUrl, needle) ||
-           containsInsensitive(item.datasheetUrl, needle);
+           toLower(item.machineCode) == needle || toLower(item.digikeyPartNumber) == needle ||
+           containsInsensitive(item.productUrl, needle) || containsInsensitive(item.datasheetUrl, needle);
+  });
+  return it == items_.end() ? nullptr : &(*it);
+}
+
+InventoryItem* InventoryStore::findByMachineCode(const string& machineCode) {
+  const auto needle = normalizeMachineCode(machineCode);
+  if (needle.empty()) {
+    return nullptr;
+  }
+
+  const auto it = find_if(items_.begin(), items_.end(), [&](const InventoryItem& item) {
+    return normalizeMachineCode(item.machineCode) == needle;
+  });
+  return it == items_.end() ? nullptr : &(*it);
+}
+
+const InventoryItem* InventoryStore::findByMachineCode(const string& machineCode) const {
+  const auto needle = normalizeMachineCode(machineCode);
+  if (needle.empty()) {
+    return nullptr;
+  }
+
+  const auto it = find_if(items_.begin(), items_.end(), [&](const InventoryItem& item) {
+    return normalizeMachineCode(item.machineCode) == needle;
   });
   return it == items_.end() ? nullptr : &(*it);
 }

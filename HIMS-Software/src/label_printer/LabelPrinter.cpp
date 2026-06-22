@@ -1358,14 +1358,11 @@ HimsLabelPlan LabelPrinterService::buildLabelPlan(const InventoryItem& item) con
     plan.parameterLine3 = parameterLines[2];
   }
   plan.himsId = trim(item.himsId);
-  plan.scannerHint = compactHimsDisplayCode(plan.himsId);
+  plan.scannerHint = buildVisibleHimsId(item);
   if (trim(plan.scannerHint).empty()) {
     plan.scannerHint = shortCode(plan.himsId, 16);
   }
-  plan.barcodeHint = compactHimsBarcodeCode(plan.scannerHint);
-  if (trim(plan.barcodeHint).empty()) {
-    plan.barcodeHint = plan.scannerHint;
-  }
+  plan.barcodeHint = normalizeMachineCode(item.machineCode);
 
   return plan;
 }
@@ -1381,13 +1378,6 @@ string LabelPrinterService::buildZpl(const InventoryItem& item) const {
   const auto parameterLine3 = fitSingleLineLabel(plan.parameterLine3, 24);
   const auto scannerHint = fitSingleLineLabel(plan.scannerHint, 14);
   const auto barcodeHint = fitSingleLineLabel(plan.barcodeHint, 14);
-  constexpr int kBarcodeModuleWidth = 2;
-  constexpr int kBarcodeHeight = 16;
-  constexpr int kBarcodeLeft = 254;
-  constexpr int kBarcodeTop = 10;
-  constexpr int kBarcodeTextLeft = 176;
-  constexpr int kBarcodeTextTop = 184;
-  constexpr int kBarcodeTextWidth = 58;
   ostringstream out;
   out << "^XA\r\n";
   out << "^CI28\r\n";
@@ -1401,6 +1391,7 @@ string LabelPrinterService::buildZpl(const InventoryItem& item) const {
   out << "^FX --- Header ---\r\n";
   out << "^FO5,0^GB180,24,24,B,6^FS\r\n";
   out << "^FO12,6^A0N,17,17^FR^FD" << sanitizeLabelText(categoryHeader) << "^FS\r\n";
+  out << "^FO200,6^A0N,17,17^FR^FDHIMS^FS\r\n";
   out << "\r\n";
 
   out << "^FX --- Main value ---\r\n";
@@ -1432,13 +1423,12 @@ string LabelPrinterService::buildZpl(const InventoryItem& item) const {
   }
   out << "\r\n";
 
-  out << "^FX --- Vertical Code 128 barcode ---\r\n";
-  out << "^BY2,2,58\r\n";
-  out << "^FO220,9^BCR,58,N,N,N,N^FD" << sanitizeLabelText(barcodeHint) << "^FS\r\n";
+  out << "^FX --- Compact QR code ---\r\n";
+  out << "^FO160,10^BQN,2,4^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
   out << "\r\n";
 
   out << "^FX --- Human readable HIMS ID ---\r\n";
-  out << "^FO200,55^A0R,13,13^FD" << sanitizeLabelText(scannerHint) << "^FS\r\n";
+  out << "^FO162,155^A0N,13,13^FD" << sanitizeLabelText(scannerHint) << "^FS\r\n";
 
   out << "^XZ\r\n";
   return out.str();

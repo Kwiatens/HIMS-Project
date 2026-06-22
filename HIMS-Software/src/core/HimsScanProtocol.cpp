@@ -111,26 +111,8 @@ string hexToken(const array<unsigned char, 32>& bytes) {
 
 bool looksLikeSupportedHimsScanCode(const string& code) {
   const auto trimmed = trim(code);
-  if (trimmed.empty()) {
-    return false;
-  }
-
-  const auto lowered = toLower(trimmed);
-  if (lowered.rfind("hims:", 0) == 0) {
-    return true;
-  }
-
-  const auto allDigits = [](const string& value) {
-    return !value.empty() &&
-           all_of(value.begin(), value.end(), [](unsigned char ch) { return isdigit(ch) != 0; });
-  };
-
-  if (allDigits(trimmed)) {
-    return true;
-  }
-
-  return trimmed.size() >= 2 && isalpha(static_cast<unsigned char>(trimmed.front())) != 0 &&
-         all_of(trimmed.begin() + 1, trimmed.end(), [](unsigned char ch) { return isdigit(ch) != 0; });
+  return !trimmed.empty() &&
+         all_of(trimmed.begin(), trimmed.end(), [](unsigned char ch) { return isdigit(ch) != 0; });
 }
 
 }  // namespace
@@ -227,18 +209,18 @@ DeviceQuantityResult applyDeviceQuantity(InventoryStore& store, const DeviceQuan
   const auto code = trim(request.code);
   if (!looksLikeSupportedHimsScanCode(code)) {
     result.httpStatus = 400;
-    result.error = "Only HIMS IDs can change stock";
+    result.error = "Only numeric machine codes can change stock";
     return result;
   }
 
   auto& items = store.items();
   const auto itemIt = find_if(items.begin(), items.end(), [&](const InventoryItem& item) {
-    return matchesHimsScanCode(item.himsId, code);
+    return matchesMachineCode(item.machineCode, code);
   });
 
   if (itemIt == items.end()) {
     result.httpStatus = 404;
-    result.error = "Unknown HIMS ID";
+    result.error = "Unknown machine code";
     return result;
   }
 

@@ -46,7 +46,8 @@ string serializeItem(const InventoryItem& item) {
       << quoted(item.location) << '\t' << quoted(join(item.tags, '|')) << '\t' << quoted(join(parameterEntries, ';'))
       << '\t' << quoted(item.notes) << '\t' << quoted(item.digikeyPartNumber) << '\t' << quoted(item.datasheetUrl)
       << '\t' << quoted(item.productUrl) << '\t' << quoted(item.syncStatus) << '\t' << quoted(item.sku) << '\t'
-      << item.lastUpdated << '\t' << quoted(item.himsId) << '\t' << item.createdAt;
+      << item.lastUpdated << '\t' << quoted(item.himsId) << '\t' << item.createdAt << '\t'
+      << quoted(item.machineCode);
   return out.str();
 }
 
@@ -63,6 +64,7 @@ bool deserializeItem(const string& line, InventoryItem& item) {
 
   item.tags = parseTagsFromDb(tags);
   item.parameters = parseParametersFromDb(parameters);
+  item.machineCode.clear();
 
   if (item.lastUpdated == 0) {
     item.lastUpdated = nowEpoch();
@@ -71,6 +73,9 @@ bool deserializeItem(const string& line, InventoryItem& item) {
   if (input >> quoted(item.himsId)) {
     if (!(input >> item.createdAt) || item.createdAt == 0) {
       item.createdAt = item.lastUpdated;
+    }
+    if (!(input >> quoted(item.machineCode))) {
+      item.machineCode.clear();
     }
   }
 

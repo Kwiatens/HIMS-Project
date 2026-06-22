@@ -40,6 +40,7 @@ struct InventoryItem {
   time_t lastUpdated = 0;
   string himsId;
   time_t createdAt = 0;
+  string machineCode;
 
   bool lowStock() const;
   bool hasMissingMetadata() const;
@@ -112,6 +113,8 @@ class InventoryStore {
   const InventoryItem* findById(const string& id) const;
   InventoryItem* findByCode(const string& code);
   const InventoryItem* findByCode(const string& code) const;
+  InventoryItem* findByMachineCode(const string& machineCode);
+  const InventoryItem* findByMachineCode(const string& machineCode) const;
 
  private:
   vector<InventoryItem> items_;

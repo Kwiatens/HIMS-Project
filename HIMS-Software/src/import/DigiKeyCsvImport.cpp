@@ -388,6 +388,7 @@ void mergeImportedMetadata(InventoryItem& target, const InventoryItem& source) {
   assignIfBlank(target.productUrl, source.productUrl);
   assignIfBlank(target.sku, source.sku);
   assignIfBlank(target.himsId, source.himsId);
+  assignIfBlank(target.machineCode, source.machineCode);
   if (target.createdAt == 0) {
     target.createdAt = source.createdAt == 0 ? target.lastUpdated : source.createdAt;
   }

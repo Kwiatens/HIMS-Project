@@ -155,6 +155,24 @@ string compactHimsDisplayCodeImpl(const string& himsId) {
   return compact;
 }
 
+bool digitsOnly(const string& value) {
+  return !value.empty() && all_of(value.begin(), value.end(), [](unsigned char ch) {
+           return isdigit(ch) != 0;
+         });
+}
+
+string normalizeMachineCodeImpl(const string& value) {
+  auto code = trim(value);
+  if (!digitsOnly(code)) {
+    return {};
+  }
+
+  if (code.size() < 4) {
+    code.insert(code.begin(), 4 - code.size(), '0');
+  }
+  return code;
+}
+
 }  // namespace
 
 time_t nowEpoch() {
@@ -194,8 +212,8 @@ bool InventoryItem::hasMissingMetadata() const {
 string InventoryItem::searchableText() const {
   ostringstream out;
   out << partName << ' ' << manufacturer << ' ' << category << ' ' << location << ' ' << notes << ' '
-      << digikeyPartNumber << ' ' << datasheetUrl << ' ' << productUrl << ' ' << sku << ' ' << himsId << ' '
-      << syncStatus;
+      << digikeyPartNumber << ' ' << datasheetUrl << ' ' << productUrl << ' ' << sku << ' ' << machineCode << ' '
+      << himsId << ' ' << syncStatus;
 
   for (const auto& tag : tags) {
     out << ' ' << tag;
@@ -268,6 +286,39 @@ bool isHimsId(const string& value) {
   return parseHimsIdValue(value, prefix, sequence);
 }
 
+string formatMachineCode(size_t sequence) {
+  ostringstream out;
+  out << setw(4) << setfill('0') << sequence;
+  return out.str();
+}
+
+string normalizeMachineCode(const string& value) {
+  return normalizeMachineCodeImpl(value);
+}
+
+bool isMachineCode(const string& value) {
+  return digitsOnly(trim(value));
+}
+
+string buildVisibleHimsId(const InventoryItem& item) {
+  const auto code = normalizeMachineCode(item.machineCode);
+  if (code.empty()) {
+    return trim(item.himsId);
+  }
+
+  string prefix = himsCategoryPrefix(item.category);
+  string parsedPrefix;
+  size_t sequence = 0;
+  if (parseHimsIdValue(item.himsId, parsedPrefix, sequence) && !parsedPrefix.empty()) {
+    prefix = parsedPrefix;
+  }
+  if (prefix.empty()) {
+    return trim(item.himsId);
+  }
+
+  return "HIMS:" + prefix + '-' + code;
+}
+
 string compactHimsDisplayCode(const string& himsId) {
   return compactHimsDisplayCodeImpl(himsId);
 }
@@ -313,9 +364,22 @@ bool matchesHimsScanCode(const string& himsId, const string& code) {
   return false;
 }
 
+bool matchesMachineCode(const string& machineCode, const string& code) {
+  const auto needle = normalizeMachineCode(code);
+  if (needle.empty()) {
+    return false;
+  }
+
+  return normalizeMachineCode(machineCode) == needle;
+}
+
 void ensureInventoryIdentifiers(vector<InventoryItem>& items) {
   unordered_map<string, size_t> nextSequenceByPrefix;
+  unordered_map<string, size_t> machineCodeCounts;
+  unordered_set<string> reservedMachineCodes;
   unordered_set<string> usedIds;
+  unordered_set<string> usedMachineCodes;
+  size_t nextMachineSequence = 1;
 
   for (const auto& item : items) {
     if (!trim(item.himsId).empty()) {
@@ -327,6 +391,12 @@ void ensureInventoryIdentifiers(vector<InventoryItem>& items) {
         nextSequence = max(nextSequence, sequence + 1);
       }
     }
+
+    const auto normalizedMachineCode = normalizeMachineCode(item.machineCode);
+    if (!normalizedMachineCode.empty()) {
+      ++machineCodeCounts[normalizedMachineCode];
+      reservedMachineCodes.insert(normalizedMachineCode);
+    }
   }
 
   for (auto& item : items) {
@@ -337,22 +407,37 @@ void ensureInventoryIdentifiers(vector<InventoryItem>& items) {
     auto normalizedId = trim(item.himsId);
     if (!normalizedId.empty() && isHimsId(normalizedId)) {
       item.himsId = normalizedId;
+    } else {
+      const auto prefix = himsCategoryPrefix(item.category);
+      auto& nextSequence = nextSequenceByPrefix[prefix];
+      if (nextSequence == 0) {
+        nextSequence = 1;
+      }
+
+      string candidate;
+      do {
+        candidate = makeHimsId(item.category, nextSequence++);
+      } while (usedIds.count(toLower(candidate)) != 0);
+
+      item.himsId = move(candidate);
+      usedIds.insert(toLower(item.himsId));
+    }
+
+    auto normalizedMachineCode = normalizeMachineCode(item.machineCode);
+    if (!normalizedMachineCode.empty() && machineCodeCounts[normalizedMachineCode] == 1 &&
+        usedMachineCodes.count(normalizedMachineCode) == 0) {
+      item.machineCode = move(normalizedMachineCode);
+      usedMachineCodes.insert(item.machineCode);
       continue;
     }
 
-    const auto prefix = himsCategoryPrefix(item.category);
-    auto& nextSequence = nextSequenceByPrefix[prefix];
-    if (nextSequence == 0) {
-      nextSequence = 1;
-    }
-
-    string candidate;
     do {
-      candidate = makeHimsId(item.category, nextSequence++);
-    } while (usedIds.count(toLower(candidate)) != 0);
+      normalizedMachineCode = formatMachineCode(nextMachineSequence++);
+    } while (reservedMachineCodes.count(normalizedMachineCode) != 0 ||
+             usedMachineCodes.count(normalizedMachineCode) != 0);
 
-    item.himsId = move(candidate);
-    usedIds.insert(toLower(item.himsId));
+    item.machineCode = move(normalizedMachineCode);
+    usedMachineCodes.insert(item.machineCode);
   }
 }
 
