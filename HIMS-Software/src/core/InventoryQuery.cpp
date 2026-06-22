@@ -138,7 +138,7 @@ constexpr ThresholdRule kCategoryThresholdRules[] = {
 
 }  // namespace
 
-bool matchesQuery(const InventoryItem& item, const string& query) {
+bool matchesQueryWithRack(const InventoryItem& item, const string& query, const string& itemRackLocation) {
   const auto tokens = tokenizeQuery(query);
   if (tokens.empty()) {
     return true;
@@ -180,6 +180,12 @@ bool matchesQuery(const InventoryItem& item, const string& query) {
       if (tokenMatchesField(item.location, value)) {
         continue;
       }
+      return false;
+    }
+
+    if (token.rfind("rack:", 0) == 0) {
+      const auto value = token.substr(5);
+      if (tokenMatchesField(itemRackLocation, value)) continue;
       return false;
     }
 
@@ -237,11 +243,20 @@ bool matchesQuery(const InventoryItem& item, const string& query) {
     if (containsInsensitive(item.searchableText(), token)) {
       continue;
     }
+    if (containsInsensitive(itemRackLocation, token)) continue;
 
     return false;
   }
 
   return true;
+}
+
+bool matchesQuery(const InventoryItem& item, const string& query) {
+  return matchesQueryWithRack(item, query, {});
+}
+
+bool matchesQuery(const InventoryItem& item, const string& query, const vector<HimsRack>& racks) {
+  return matchesQueryWithRack(item, query, rackLocation(item, racks));
 }
 
 vector<size_t> filterItems(const vector<InventoryItem>& items, const string& query) {
@@ -250,6 +265,14 @@ vector<size_t> filterItems(const vector<InventoryItem>& items, const string& que
     if (matchesQuery(items[index], query)) {
       indices.push_back(index);
     }
+  }
+  return indices;
+}
+
+vector<size_t> filterItems(const vector<InventoryItem>& items, const string& query, const vector<HimsRack>& racks) {
+  vector<size_t> indices;
+  for (size_t index = 0; index < items.size(); ++index) {
+    if (matchesQuery(items[index], query, racks)) indices.push_back(index);
   }
   return indices;
 }

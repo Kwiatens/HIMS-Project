@@ -22,8 +22,13 @@ ftxui::Element App::renderDetailUi() const {
   if (const auto* item = selectedItem()) {
     const auto electricalFields = electricalFieldsForItem(*item);
     leftRows.push_back(fullLine("Core details", uiAccentColor(), uiPanelLeftBg()));
-    for (const auto& field : detailCoreFields(*item)) {
-      leftRows.push_back(detailFieldLine(field, 40));
+    const auto coreFields = detailCoreFields(*item, rackLocation(*item, store_.racks()));
+    for (size_t index = 0; index < coreFields.size(); ++index) {
+      if (index == 0) {
+        leftRows.push_back(fullLine(coreFields[index].label + coreFields[index].value, uiTitleColor(), uiRowSelectedBg()));
+      } else {
+        leftRows.push_back(detailFieldLine(coreFields[index], 40));
+      }
     }
     if (!electricalFields.empty()) {
       leftRows.push_back(ftxui::separator());
@@ -148,7 +153,7 @@ void App::renderDetail(ostringstream& out, const ConsoleSize& size) {
     if (const auto* item = selectedItem()) {
       const auto electricalFields = electricalFieldsForItem(*item);
       lines.push_back(styleText("Core details", kColorAccent));
-      for (const auto& field : detailCoreFields(*item)) {
+      for (const auto& field : detailCoreFields(*item, rackLocation(*item, store_.racks()))) {
         lines.push_back(styleText(field.label + field.value, kColorTitle));
       }
       if (!electricalFields.empty()) {
@@ -189,7 +194,7 @@ void App::renderDetail(ostringstream& out, const ConsoleSize& size) {
   if (const auto* item = selectedItem()) {
     const auto electricalFields = electricalFieldsForItem(*item);
     leftLines.push_back("Core details");
-    for (const auto& field : detailCoreFields(*item)) {
+    for (const auto& field : detailCoreFields(*item, rackLocation(*item, store_.racks()))) {
       leftLines.push_back(field.label + field.value);
     }
     if (!electricalFields.empty()) {

@@ -45,6 +45,7 @@ struct HimsLabelPlan {
   string himsId;
   string scannerHint;
   string barcodeHint;
+  string rackLocation;
 };
 
 class PrinterBackend {
@@ -72,9 +73,9 @@ class LabelPrinterService {
   optional<PrinterQueueInfo> configuredPrinterInfo() const;
   PrinterCheckResult probeConfiguredPrinter() const;
 
-  HimsLabelPlan buildLabelPlan(const InventoryItem& item) const;
-  string buildZpl(const InventoryItem& item) const;
-  bool printItemLabel(const InventoryItem& item, string* error) const;
+  HimsLabelPlan buildLabelPlan(const InventoryItem& item, string rackLocation = {}) const;
+  string buildZpl(const InventoryItem& item, string rackLocation = {}) const;
+  bool printItemLabel(const InventoryItem& item, string* error, string rackLocation = {}) const;
 
   string summaryText() const;
 

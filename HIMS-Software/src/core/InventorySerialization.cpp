@@ -47,7 +47,8 @@ string serializeItem(const InventoryItem& item) {
       << '\t' << quoted(item.notes) << '\t' << quoted(item.digikeyPartNumber) << '\t' << quoted(item.datasheetUrl)
       << '\t' << quoted(item.productUrl) << '\t' << quoted(item.syncStatus) << '\t' << quoted(item.sku) << '\t'
       << item.lastUpdated << '\t' << quoted(item.himsId) << '\t' << item.createdAt << '\t'
-      << quoted(item.machineCode);
+      << quoted(item.machineCode) << '\t' << quoted(item.rackId) << '\t' << quoted(item.rackSlot) << '\t'
+      << quoted(rackAssignmentModeName(item.rackAssignment));
   return out.str();
 }
 
@@ -76,6 +77,10 @@ bool deserializeItem(const string& line, InventoryItem& item) {
     }
     if (!(input >> quoted(item.machineCode))) {
       item.machineCode.clear();
+    }
+    string rackMode;
+    if (input >> quoted(item.rackId) >> quoted(item.rackSlot) >> quoted(rackMode)) {
+      item.rackAssignment = parseRackAssignmentMode(rackMode);
     }
   }
 

@@ -71,6 +71,7 @@ class App {
     ProductUrl,
     Sku,
     SyncStatus,
+    RackLocation,
   };
 
   struct FieldOption {
@@ -86,6 +87,7 @@ class App {
 
   struct UndoSnapshot {
     std::vector<InventoryItem> items;
+    std::vector<HimsRack> racks;
     std::vector<ActivityEntry> activities;
     size_t selectedPosition = 0;
     bool valid = false;

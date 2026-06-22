@@ -31,6 +31,7 @@ add_executable(hims
   src/core/Inventory.cpp
   src/core/InventoryHelpers.cpp
   src/core/InventoryQuery.cpp
+  src/core/RackAllocation.cpp
   src/core/InventorySerialization.cpp
   src/core/InventoryHistory.cpp
   src/core/InventoryStorage.cpp
@@ -74,6 +75,7 @@ add_executable(hims_tests
   src/core/Inventory.cpp
   src/core/InventoryHelpers.cpp
   src/core/InventoryQuery.cpp
+  src/core/RackAllocation.cpp
   src/core/InventorySerialization.cpp
   src/core/InventoryHistory.cpp
   src/core/InventoryStorage.cpp

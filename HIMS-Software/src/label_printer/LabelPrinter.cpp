@@ -1341,7 +1341,7 @@ PrinterCheckResult LabelPrinterService::probeConfiguredPrinter() const {
   return backend_->probePrinter(configuredPrinter_);
 }
 
-HimsLabelPlan LabelPrinterService::buildLabelPlan(const InventoryItem& item) const {
+HimsLabelPlan LabelPrinterService::buildLabelPlan(const InventoryItem& item, string rackLocation) const {
   HimsLabelPlan plan;
   const auto parameterLines = parameterLinesForItem(item);
   plan.categoryHeader = partContextHeader(item);
@@ -1363,12 +1363,13 @@ HimsLabelPlan LabelPrinterService::buildLabelPlan(const InventoryItem& item) con
     plan.scannerHint = shortCode(plan.himsId, 16);
   }
   plan.barcodeHint = normalizeMachineCode(item.machineCode);
+  plan.rackLocation = trim(rackLocation);
 
   return plan;
 }
 
-string LabelPrinterService::buildZpl(const InventoryItem& item) const {
-  const auto plan = buildLabelPlan(item);
+string LabelPrinterService::buildZpl(const InventoryItem& item, string rackLocation) const {
+  const auto plan = buildLabelPlan(item, move(rackLocation));
   const auto categoryHeader = fitSingleLineLabel(plan.categoryHeader, 16);
   const auto mainValue = fitSingleLineLabel(plan.mainValue, 14);
   const auto packageLine = fitSingleLineLabel(plan.packageLine, 24);
@@ -1378,6 +1379,7 @@ string LabelPrinterService::buildZpl(const InventoryItem& item) const {
   const auto parameterLine3 = fitSingleLineLabel(plan.parameterLine3, 24);
   const auto scannerHint = fitSingleLineLabel(plan.scannerHint, 14);
   const auto barcodeHint = fitSingleLineLabel(plan.barcodeHint, 14);
+  const auto rackHint = fitSingleLineLabel(plan.rackLocation, 12);
   ostringstream out;
   out << "^XA\r\n";
   out << "^CI28\r\n";
@@ -1431,11 +1433,16 @@ string LabelPrinterService::buildZpl(const InventoryItem& item) const {
   out << "^FX --- Human readable HIMS ID ---\r\n";
   out << "^FO162,155^A0N,13,13^FD" << sanitizeLabelText(scannerHint) << "^FS\r\n";
 
+  if (!rackHint.empty()) {
+    out << "^FX --- HIMS rack location ---\r\n";
+    out << "^FO10,176^A0N,18,18^FD" << sanitizeLabelText(rackHint) << "^FS\r\n";
+  }
+
   out << "^XZ\r\n";
   return out.str();
 }
 
-bool LabelPrinterService::printItemLabel(const InventoryItem& item, string* error) const {
+bool LabelPrinterService::printItemLabel(const InventoryItem& item, string* error, string rackLocation) const {
   if (backend_ == nullptr) {
     if (error != nullptr) {
       *error = "Printer backend unavailable";
@@ -1450,7 +1457,7 @@ bool LabelPrinterService::printItemLabel(const InventoryItem& item, string* erro
     return false;
   }
 
-  const auto zpl = buildZpl(item);
+  const auto zpl = buildZpl(item, move(rackLocation));
   return backend_->sendRawJob(configuredPrinter_, makeJobName(item), zpl, error);
 }
 

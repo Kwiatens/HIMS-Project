@@ -21,6 +21,21 @@ struct Parameter {
   string value;
 };
 
+enum class RackAssignmentMode {
+  Automatic,
+  Manual,
+  Unassigned,
+};
+
+struct HimsRack {
+  string id;
+  string code;
+  string componentType;
+  int rows = 5;
+  int columns = 5;
+  time_t createdAt = 0;
+};
+
 struct InventoryItem {
   string id;
   string partName;
@@ -41,6 +56,9 @@ struct InventoryItem {
   string himsId;
   time_t createdAt = 0;
   string machineCode;
+  string rackId;
+  string rackSlot;
+  RackAssignmentMode rackAssignment = RackAssignmentMode::Automatic;
 
   bool lowStock() const;
   bool hasMissingMetadata() const;
@@ -91,7 +109,9 @@ vector<string> tokenizeQuery(const string& query);
 
 bool containsInsensitive(string_view haystack, string_view needle);
 bool matchesQuery(const InventoryItem& item, const string& query);
+bool matchesQuery(const InventoryItem& item, const string& query, const vector<HimsRack>& racks);
 vector<size_t> filterItems(const vector<InventoryItem>& items, const string& query);
+vector<size_t> filterItems(const vector<InventoryItem>& items, const string& query, const vector<HimsRack>& racks);
 Summary summarize(const vector<InventoryItem>& items);
 int categoryLowStockThreshold(const string& category);
 bool lowStockByCategory(const InventoryItem& item);
@@ -105,6 +125,8 @@ class InventoryStore {
  public:
   vector<InventoryItem>& items();
   const vector<InventoryItem>& items() const;
+  vector<HimsRack>& racks();
+  const vector<HimsRack>& racks() const;
 
   bool load(const filesystem::path& path);
   bool save(const filesystem::path& path) const;
@@ -118,7 +140,16 @@ class InventoryStore {
 
  private:
   vector<InventoryItem> items_;
+  vector<HimsRack> racks_;
 };
+
+string rackAssignmentModeName(RackAssignmentMode mode);
+RackAssignmentMode parseRackAssignmentMode(const string& value);
+string rackLocation(const InventoryItem& item, const vector<HimsRack>& racks);
+bool isValidRackSlot(const string& slot);
+bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item);
+bool reconcileRackAssignments(InventoryStore& store);
+bool setManualRackLocation(InventoryStore& store, InventoryItem& item, const string& value, string& error);
 
 bool loadActivities(const filesystem::path& path, vector<ActivityEntry>& activities);
 bool saveActivities(const filesystem::path& path, const vector<ActivityEntry>& activities);

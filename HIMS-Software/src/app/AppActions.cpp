@@ -231,6 +231,7 @@ void App::loadState() {
 
 void App::saveState() {
   ensureInventoryIdentifiers(store_.items());
+  reconcileRackAssignments(store_);
   store_.save(inventoryPath_);
   printerService_.saveConfig(printerPath_);
   saveActivities(activityPath_, activities_);
@@ -291,6 +292,7 @@ bool App::chooseHimsFolder() {
 
 void App::captureUndoSnapshot() {
   undoSnapshot_.items = store_.items();
+  undoSnapshot_.racks = store_.racks();
   undoSnapshot_.activities = activities_;
   undoSnapshot_.selectedPosition = selectedPosition_;
   undoSnapshot_.valid = true;
@@ -303,6 +305,7 @@ bool App::undoLastInventoryChange() {
   }
 
   store_.items() = undoSnapshot_.items;
+  store_.racks() = undoSnapshot_.racks;
   activities_ = undoSnapshot_.activities;
   selectedPosition_ = undoSnapshot_.selectedPosition;
   undoSnapshot_.valid = false;
@@ -335,7 +338,7 @@ void App::markDirty() {
 }
 
 vector<size_t> App::filteredIndices() const {
-  return filterItems(store_.items(), searchQuery_);
+  return filterItems(store_.items(), searchQuery_, store_.racks());
 }
 
 size_t App::selectedIndex() const {
@@ -600,6 +603,14 @@ void App::commitEditField(EditField field, const string& value) {
     case EditField::SyncStatus:
       workingCopy_.item.syncStatus = toLower(trimmed);
       break;
+    case EditField::RackLocation: {
+      string error;
+      if (!setManualRackLocation(store_, workingCopy_.item, value, error)) {
+        setMessage(error, 4);
+        return;
+      }
+      break;
+    }
   }
 
   if (!valid) {
@@ -631,9 +642,11 @@ void App::saveWorkingCopy() {
   captureUndoSnapshot();
   if (workingCopy_.isNew) {
     store_.items().push_back(workingCopy_.item);
+    reconcileRackAssignment(store_, store_.items().back());
     selectedPosition_ = store_.items().empty() ? 0 : store_.items().size() - 1;
   } else if (workingCopy_.originalIndex < store_.items().size()) {
     store_.items()[workingCopy_.originalIndex] = workingCopy_.item;
+    reconcileRackAssignment(store_, store_.items()[workingCopy_.originalIndex]);
   }
 
   logActivity("edit", workingCopy_.item.partName + " updated");
@@ -870,6 +883,12 @@ void App::acceptImportCandidate() {
       existing->quantity = max(0, existing->quantity + candidate->item.quantity);
       existing->lastUpdated = time(nullptr);
       mergeImportedMetadata(*existing, candidate->item);
+      if (candidate->item.rackAssignment != RackAssignmentMode::Automatic) {
+        existing->rackId = candidate->item.rackId;
+        existing->rackSlot = candidate->item.rackSlot;
+        existing->rackAssignment = candidate->item.rackAssignment;
+      }
+      reconcileRackAssignment(store_, *existing);
       acceptedId = existing->id;
       ++importMergedCount_;
     }
@@ -878,6 +897,7 @@ void App::acceptImportCandidate() {
   if (acceptedId.empty()) {
     captureUndoSnapshot();
     store_.items().push_back(candidate->item);
+    reconcileRackAssignment(store_, store_.items().back());
     acceptedId = store_.items().back().id;
     ++importCreatedCount_;
   }
@@ -957,6 +977,7 @@ void App::syncAcceptedImports() {
     }
 
     mergeDigiKeyMetadata(*item, *details);
+    reconcileRackAssignment(store_, *item);
     ++importSyncedCount_;
   }
 
@@ -1029,6 +1050,8 @@ string App::fieldLabel(EditField field) const {
       return "SKU";
     case EditField::SyncStatus:
       return "Sync status";
+    case EditField::RackLocation:
+      return "Rack location";
   }
   return "Field";
 }
@@ -1076,6 +1099,10 @@ string App::currentFieldValue(EditField field) const {
       return item->sku;
     case EditField::SyncStatus:
       return item->syncStatus;
+    case EditField::RackLocation: {
+      const auto location = rackLocation(*item, store_.racks());
+      return location.empty() ? (item->rackAssignment == RackAssignmentMode::Automatic ? "AUTO" : "") : location;
+    }
   }
 
   return {};
@@ -1089,6 +1116,7 @@ vector<App::FieldOption> App::fieldOptions() const {
       {"Quantity", EditField::Quantity},
       {"Reorder threshold", EditField::ReorderThreshold},
       {"Location", EditField::Location},
+      {"Rack location", EditField::RackLocation},
       {"Tags", EditField::Tags},
       {"Parameters", EditField::Parameters},
       {"Notes", EditField::Notes},
@@ -1112,7 +1140,7 @@ string App::softwareVersion() const {
 
 string App::itemDetailText(const InventoryItem& item, int width) const {
   ostringstream out;
-  const auto fields = stockPreviewFields(item);
+  const auto fields = stockPreviewFields(item, rackLocation(item, store_.racks()));
   for (const auto& field : fields) {
     const auto line = field.label + field.value;
     for (const auto& wrapped : wrapText(line, width)) {

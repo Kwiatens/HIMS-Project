@@ -109,8 +109,8 @@ optional<string> parameterValue(const InventoryItem& item, initializer_list<cons
 string prettyLabel(const string& label);
 
 vector<DetailField> electricalFieldsForItem(const InventoryItem& item);
-vector<DetailField> stockPreviewFields(const InventoryItem& item);
-vector<DetailField> detailCoreFields(const InventoryItem& item);
+vector<DetailField> stockPreviewFields(const InventoryItem& item, string rack = {});
+vector<DetailField> detailCoreFields(const InventoryItem& item, string rack = {});
 ftxui::Element detailFieldLine(const DetailField& field, int width);
 
 }  // namespace hims

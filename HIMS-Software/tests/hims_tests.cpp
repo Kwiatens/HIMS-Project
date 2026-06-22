@@ -205,6 +205,107 @@ int main() {
   }
 
   {
+    InventoryStore rackStore;
+    for (int index = 0; index < 26; ++index) {
+      InventoryItem resistor;
+      resistor.id = "rack-resistor-" + to_string(index);
+      resistor.partName = to_string(index) + "k resistor";
+      resistor.category = "Resistors";
+      resistor.parameters = {{"Package", "0603"}};
+      rackStore.items().push_back(resistor);
+    }
+    assert(reconcileRackAssignments(rackStore));
+    assert(rackStore.racks().size() == 2);
+    assert(rackStore.racks()[0].code == "R1");
+    assert(rackLocation(rackStore.items()[0], rackStore.racks()) == "R1-A1");
+    assert(rackLocation(rackStore.items()[24], rackStore.racks()) == "R1-E5");
+    assert(rackLocation(rackStore.items()[25], rackStore.racks()) == "R2-A1");
+
+    InventoryItem capacitor;
+    capacitor.id = "rack-capacitor";
+    capacitor.partName = "1uF capacitor";
+    capacitor.category = "Capacitors";
+    capacitor.parameters = {{"Package", "0805"}};
+    rackStore.items().push_back(capacitor);
+    reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(rackStore.racks().size() == 3);
+    assert(rackLocation(rackStore.items().back(), rackStore.racks()) == "R3-A1");
+
+    InventoryItem module;
+    module.id = "rack-module";
+    module.partName = "ESP32-S3 Module";
+    module.category = "MCUs";
+    module.parameters = {{"Package", "Module"}};
+    rackStore.items().push_back(module);
+    reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(rackLocation(rackStore.items().back(), rackStore.racks()).empty());
+
+    InventoryItem powerMosfet;
+    powerMosfet.id = "rack-power-mosfet";
+    powerMosfet.partName = "Power MOSFET";
+    powerMosfet.category = "MOSFETs";
+    powerMosfet.parameters = {{"Package / Case", "TO-263-3, D2PAK"}};
+    rackStore.items().push_back(powerMosfet);
+    reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(rackLocation(rackStore.items().back(), rackStore.racks()).empty());
+
+    InventoryItem compactMosfet;
+    compactMosfet.id = "rack-compact-mosfet";
+    compactMosfet.partName = "Small MOSFET";
+    compactMosfet.category = "MOSFETs";
+    compactMosfet.parameters = {{"Package / Case", "SOT-23"}};
+    rackStore.items().push_back(compactMosfet);
+    reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(!rackLocation(rackStore.items().back(), rackStore.racks()).empty());
+
+    string error;
+    auto& manuallyPlaced = rackStore.items()[26];
+    assert(setManualRackLocation(rackStore, manuallyPlaced, "R2-E5", error));
+    assert(manuallyPlaced.rackAssignment == RackAssignmentMode::Manual);
+    assert(rackLocation(manuallyPlaced, rackStore.racks()) == "R2-E5");
+    manuallyPlaced.category = "Integrated Circuits";
+    manuallyPlaced.parameters = {{"Package", "QFN-16"}};
+    reconcileRackAssignment(rackStore, manuallyPlaced);
+    assert(rackLocation(manuallyPlaced, rackStore.racks()) == "R2-E5");
+
+    assert(!setManualRackLocation(rackStore, manuallyPlaced, "R2-A1", error));
+    assert(error.find("occupied") != string::npos);
+    assert(!setManualRackLocation(rackStore, manuallyPlaced, "R99-A1", error));
+    assert(error.find("does not exist") != string::npos);
+    assert(!setManualRackLocation(rackStore, manuallyPlaced, "R2-Z9", error));
+    assert(error.find("A1 through E5") != string::npos);
+
+    assert(setManualRackLocation(rackStore, manuallyPlaced, "", error));
+    reconcileRackAssignment(rackStore, manuallyPlaced);
+    assert(manuallyPlaced.rackAssignment == RackAssignmentMode::Unassigned);
+    assert(rackLocation(manuallyPlaced, rackStore.racks()).empty());
+    assert(setManualRackLocation(rackStore, manuallyPlaced, "AUTO", error));
+    reconcileRackAssignment(rackStore, manuallyPlaced);
+    assert(manuallyPlaced.rackAssignment == RackAssignmentMode::Automatic);
+    assert(!rackLocation(manuallyPlaced, rackStore.racks()).empty());
+    const auto automaticLocation = rackLocation(manuallyPlaced, rackStore.racks());
+    assert(matchesQuery(manuallyPlaced, "rack:" + automaticLocation, rackStore.racks()));
+    assert(matchesQuery(manuallyPlaced, automaticLocation, rackStore.racks()));
+    const auto stockFields = stockPreviewFields(manuallyPlaced, automaticLocation);
+    assert(!stockFields.empty());
+    assert(stockFields.front().label == "HIMS RACK: ");
+    assert(stockFields.front().value == automaticLocation);
+    const auto coreFields = detailCoreFields(manuallyPlaced, automaticLocation);
+    assert(!coreFields.empty());
+    assert(coreFields.front().value == automaticLocation);
+
+    const auto tempPath = filesystem::temp_directory_path() / "hims-rack-roundtrip.db";
+    assert(rackStore.save(tempPath));
+    InventoryStore loadedRackStore;
+    assert(loadedRackStore.load(tempPath));
+    assert(loadedRackStore.racks().size() == rackStore.racks().size());
+    const auto* loadedCapacitor = loadedRackStore.findById("rack-capacitor");
+    assert(loadedCapacitor != nullptr);
+    assert(!rackLocation(*loadedCapacitor, loadedRackStore.racks()).empty());
+    filesystem::remove(tempPath);
+  }
+
+  {
     InventoryItem item;
     item.id = "abc";
     item.partName = "Test Part";
@@ -351,7 +452,11 @@ int main() {
     assert(zpl.find("^FDResistor^FS") != string::npos);
     assert(zpl.find("^FDPwr 0.125W^FS") != string::npos);
     assert(zpl.find("^FO10,100^A0N,16,16^FDYageo^FS") != string::npos);
-    assert(zpl.find("^BQN,2,2") != string::npos);
+    assert(zpl.find("^BQN,2,3") != string::npos);
+    const auto rackPlan = service.buildLabelPlan(item, "R3-E3");
+    assert(rackPlan.rackLocation == "R3-E3");
+    const auto rackZpl = service.buildZpl(item, "R3-E3");
+    assert(rackZpl.find("^FO10,176^A0N,18,18^FDR3-E3^FS") != string::npos);
     assert(zpl.find("^FDLA,0002^FS") != string::npos);
     assert(zpl.find("^FO162,155^A0N,13,13^FDHIMS:R-0002^FS") != string::npos);
     assert(zpl.find("^BC") == string::npos);
@@ -653,4 +758,3 @@ int main() {
   cout << "HIMS core tests passed\n";
   return 0;
 }
-

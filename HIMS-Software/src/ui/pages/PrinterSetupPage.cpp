@@ -97,7 +97,7 @@ bool App::printSelectedLabel() {
   }
 
   string error;
-  if (!printerService_.printItemLabel(*item, &error)) {
+  if (!printerService_.printItemLabel(*item, &error, rackLocation(*item, store_.racks()))) {
     setMessage("Print failed: " + error, 4);
     refreshPrinterState();
     return false;

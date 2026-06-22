@@ -92,10 +92,14 @@ ftxui::Element App::renderStockUi() const {
   if (const auto* item = selectedItem()) {
     detailRows.push_back(fullLine("Part summary", uiAccentColor(), uiPanelRightBg()));
     const auto electricalFields = electricalFieldsForItem(*item);
-    const auto previewFields = stockPreviewFields(*item);
+    const auto previewFields = stockPreviewFields(*item, rackLocation(*item, store_.racks()));
     for (size_t index = 0; index < previewFields.size(); ++index) {
       const auto& field = previewFields[index];
-      if (index == 3 && !electricalFields.empty()) {
+      if (index == 0) {
+        detailRows.push_back(fullLine(field.label + field.value, uiTitleColor(), uiRowSelectedBg()));
+        continue;
+      }
+      if (index == 4 && !electricalFields.empty()) {
         detailRows.push_back(ftxui::separator());
         detailRows.push_back(fullLine("Electrical parameters", uiAccentColor(), uiPanelRightBg()));
       }
@@ -318,7 +322,7 @@ void App::renderStock(ostringstream& out, const ConsoleSize& size) {
     lines.push_back("");
     lines.push_back(styleText("Detail", kColorAccent));
     if (const auto* item = selectedItem()) {
-      const auto previewFields = stockPreviewFields(*item);
+      const auto previewFields = stockPreviewFields(*item, rackLocation(*item, store_.racks()));
       for (size_t index = 0; index < previewFields.size() && lines.size() < 38; ++index) {
         lines.push_back(styleText(previewFields[index].label + previewFields[index].value, kColorTitle));
       }
@@ -349,9 +353,9 @@ void App::renderStock(ostringstream& out, const ConsoleSize& size) {
   if (const auto* item = selectedItem()) {
     rightLines.push_back("Part summary");
     const auto electricalFields = electricalFieldsForItem(*item);
-    const auto previewFields = stockPreviewFields(*item);
+    const auto previewFields = stockPreviewFields(*item, rackLocation(*item, store_.racks()));
     for (size_t index = 0; index < previewFields.size(); ++index) {
-      if (index == 3 && !electricalFields.empty()) {
+      if (index == 4 && !electricalFields.empty()) {
         rightLines.push_back("");
         rightLines.push_back("Electrical parameters");
       }

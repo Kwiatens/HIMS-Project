@@ -38,7 +38,10 @@ bool ensureHimsTableSchema(SqliteConnection& connection) {
       last_updated INTEGER NOT NULL,
       hims_id TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL DEFAULT 0,
-      machine_code TEXT NOT NULL DEFAULT ''
+      machine_code TEXT NOT NULL DEFAULT '',
+      rack_id TEXT NOT NULL DEFAULT '',
+      rack_slot TEXT NOT NULL DEFAULT '',
+      rack_assignment TEXT NOT NULL DEFAULT 'automatic'
     )
   )SQL")) {
     return false;
@@ -58,6 +61,45 @@ bool ensureHimsTableSchema(SqliteConnection& connection) {
     if (!execSql(connection, "ALTER TABLE hims_items ADD COLUMN machine_code TEXT NOT NULL DEFAULT ''")) {
       return false;
     }
+  }
+  if (!tableColumnExists(connection, "hims_items", "rack_id") &&
+      !execSql(connection, "ALTER TABLE hims_items ADD COLUMN rack_id TEXT NOT NULL DEFAULT ''")) return false;
+  if (!tableColumnExists(connection, "hims_items", "rack_slot") &&
+      !execSql(connection, "ALTER TABLE hims_items ADD COLUMN rack_slot TEXT NOT NULL DEFAULT ''")) return false;
+  if (!tableColumnExists(connection, "hims_items", "rack_assignment") &&
+      !execSql(connection, "ALTER TABLE hims_items ADD COLUMN rack_assignment TEXT NOT NULL DEFAULT 'automatic'")) return false;
+  if (!execSql(connection, R"SQL(
+    CREATE TABLE IF NOT EXISTS hims_racks (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      component_type TEXT NOT NULL,
+      rows_count INTEGER NOT NULL DEFAULT 5,
+      columns_count INTEGER NOT NULL DEFAULT 5,
+      created_at INTEGER NOT NULL DEFAULT 0
+    )
+  )SQL")) return false;
+  if (!execSql(connection, R"SQL(
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hims_items_rack_slot
+    ON hims_items(rack_id, rack_slot)
+    WHERE rack_id <> '' AND rack_slot <> ''
+  )SQL")) return false;
+  return true;
+}
+
+bool loadRacks(SqliteConnection& connection, vector<HimsRack>& racks) {
+  SqliteStatement statement;
+  if (sqliteApi().prepare_v2(connection.db,
+      "SELECT id, code, component_type, rows_count, columns_count, created_at FROM hims_racks ORDER BY created_at, code",
+      -1, &statement.stmt, nullptr) != SQLITE_OK) return false;
+  while (sqliteApi().step(statement.stmt) == SQLITE_ROW) {
+    HimsRack rack;
+    rack.id = sqliteText(statement.stmt, 0);
+    rack.code = sqliteText(statement.stmt, 1);
+    rack.componentType = sqliteText(statement.stmt, 2);
+    rack.rows = sqliteApi().column_int(statement.stmt, 3);
+    rack.columns = sqliteApi().column_int(statement.stmt, 4);
+    rack.createdAt = static_cast<time_t>(sqliteApi().column_int64(statement.stmt, 5));
+    racks.push_back(move(rack));
   }
   return true;
 }
@@ -151,7 +193,8 @@ bool loadItemsFromHimsTable(SqliteConnection& connection, vector<InventoryItem>&
   const char* sql = R"SQL(
     SELECT id, part_name, manufacturer, category, quantity, reorder_threshold, location,
            tags, parameters, notes, digikey_part_number, datasheet_url, product_url,
-           sync_status, sku, last_updated, hims_id, created_at, machine_code
+           sync_status, sku, last_updated, hims_id, created_at, machine_code,
+           rack_id, rack_slot, rack_assignment
     FROM hims_items
     ORDER BY part_name COLLATE NOCASE ASC
   )SQL";
@@ -188,6 +231,9 @@ bool loadItemsFromHimsTable(SqliteConnection& connection, vector<InventoryItem>&
     item.himsId = sqliteText(statement.stmt, 16);
     item.createdAt = static_cast<time_t>(sqliteApi().column_int64(statement.stmt, 17));
     item.machineCode = sqliteText(statement.stmt, 18);
+    item.rackId = sqliteText(statement.stmt, 19);
+    item.rackSlot = sqliteText(statement.stmt, 20);
+    item.rackAssignment = parseRackAssignmentMode(sqliteText(statement.stmt, 21));
     items.push_back(move(item));
   }
 
@@ -218,13 +264,40 @@ bool importLegacyItems(SqliteConnection& connection, vector<InventoryItem>& item
   return true;
 }
 
-bool writeItemsToHimsTable(SqliteConnection& connection, const vector<InventoryItem>& items) {
+bool writeItemsToHimsTable(SqliteConnection& connection, const vector<InventoryItem>& items,
+                           const vector<HimsRack>& racks) {
   if (!ensureHimsTableSchema(connection)) {
     return false;
   }
 
   if (!execSql(connection, "BEGIN IMMEDIATE TRANSACTION")) {
     return false;
+  }
+  if (!execSql(connection, "DELETE FROM hims_racks")) {
+    execSql(connection, "ROLLBACK");
+    return false;
+  }
+  {
+    SqliteStatement rackStatement;
+    const char* rackSql = "INSERT INTO hims_racks (id, code, component_type, rows_count, columns_count, created_at) VALUES (?, ?, ?, ?, ?, ?)";
+    if (sqliteApi().prepare_v2(connection.db, rackSql, -1, &rackStatement.stmt, nullptr) != SQLITE_OK) {
+      execSql(connection, "ROLLBACK");
+      return false;
+    }
+    for (const auto& rack : racks) {
+      sqliteApi().bind_text(rackStatement.stmt, 1, rack.id.c_str(), -1, SQLITE_TRANSIENT);
+      sqliteApi().bind_text(rackStatement.stmt, 2, rack.code.c_str(), -1, SQLITE_TRANSIENT);
+      sqliteApi().bind_text(rackStatement.stmt, 3, rack.componentType.c_str(), -1, SQLITE_TRANSIENT);
+      sqliteApi().bind_int(rackStatement.stmt, 4, rack.rows);
+      sqliteApi().bind_int(rackStatement.stmt, 5, rack.columns);
+      sqliteApi().bind_int64(rackStatement.stmt, 6, static_cast<sqlite3_int64>(rack.createdAt));
+      if (sqliteApi().step(rackStatement.stmt) != SQLITE_DONE) {
+        execSql(connection, "ROLLBACK");
+        return false;
+      }
+      sqliteApi().reset(rackStatement.stmt);
+      sqliteApi().clear_bindings(rackStatement.stmt);
+    }
   }
   if (!execSql(connection, "DELETE FROM hims_items")) {
     execSql(connection, "ROLLBACK");
@@ -236,8 +309,9 @@ bool writeItemsToHimsTable(SqliteConnection& connection, const vector<InventoryI
     INSERT OR REPLACE INTO hims_items (
       id, part_name, manufacturer, category, quantity, reorder_threshold, location,
       tags, parameters, notes, digikey_part_number, datasheet_url, product_url,
-      sync_status, sku, last_updated, hims_id, created_at, machine_code
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sync_status, sku, last_updated, hims_id, created_at, machine_code,
+      rack_id, rack_slot, rack_assignment
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   )SQL";
 
   if (sqliteApi().prepare_v2(connection.db, sql, -1, &statement.stmt, nullptr) != SQLITE_OK) {
@@ -273,6 +347,10 @@ bool writeItemsToHimsTable(SqliteConnection& connection, const vector<InventoryI
     sqliteApi().bind_text(statement.stmt, 17, item.himsId.c_str(), -1, SQLITE_TRANSIENT);
     sqliteApi().bind_int64(statement.stmt, 18, static_cast<sqlite3_int64>(item.createdAt));
     sqliteApi().bind_text(statement.stmt, 19, item.machineCode.c_str(), -1, SQLITE_TRANSIENT);
+    sqliteApi().bind_text(statement.stmt, 20, item.rackId.c_str(), -1, SQLITE_TRANSIENT);
+    sqliteApi().bind_text(statement.stmt, 21, item.rackSlot.c_str(), -1, SQLITE_TRANSIENT);
+    const auto assignment = rackAssignmentModeName(item.rackAssignment);
+    sqliteApi().bind_text(statement.stmt, 22, assignment.c_str(), -1, SQLITE_TRANSIENT);
 
     if (sqliteApi().step(statement.stmt) != SQLITE_DONE) {
       execSql(connection, "ROLLBACK");
@@ -299,12 +377,17 @@ vector<InventoryItem>& InventoryStore::items() {
   return items_;
 }
 
+vector<HimsRack>& InventoryStore::racks() { return racks_; }
+
+const vector<HimsRack>& InventoryStore::racks() const { return racks_; }
+
 const vector<InventoryItem>& InventoryStore::items() const {
   return items_;
 }
 
 bool InventoryStore::load(const filesystem::path& path) {
   items_.clear();
+  racks_.clear();
 #ifdef _WIN32
   SqliteConnection connection;
   if (!openDatabase(path, connection)) {
@@ -314,6 +397,7 @@ bool InventoryStore::load(const filesystem::path& path) {
   if (!ensureHimsTableSchema(connection)) {
     return false;
   }
+  loadRacks(connection, racks_);
 
   const bool hasHimsTable = tableExists(connection, "hims_items");
   const bool hasLegacyTable = tableExists(connection, "items");
@@ -333,7 +417,7 @@ bool InventoryStore::load(const filesystem::path& path) {
     items_ = move(legacyItems);
     loaded = true;
     ensureInventoryIdentifiers(items_);
-    writeItemsToHimsTable(connection, items_);
+    writeItemsToHimsTable(connection, items_, racks_);
   } else if (loaded && !himsItems.empty()) {
     items_ = move(himsItems);
   } else if (!loaded || items_.empty()) {
@@ -344,11 +428,12 @@ bool InventoryStore::load(const filesystem::path& path) {
       items_ = move(legacyItems);
       loaded = true;
       ensureInventoryIdentifiers(items_);
-      writeItemsToHimsTable(connection, items_);
+      writeItemsToHimsTable(connection, items_, racks_);
     }
   }
 
   ensureInventoryIdentifiers(items_);
+  reconcileRackAssignments(*this);
   return loaded;
 #else
   ifstream file(path);
@@ -384,7 +469,7 @@ bool InventoryStore::save(const filesystem::path& path) const {
     return false;
   }
 
-  return writeItemsToHimsTable(connection, items);
+  return writeItemsToHimsTable(connection, items, racks_);
 #else
   auto items = items_;
   ensureInventoryIdentifiers(items);
