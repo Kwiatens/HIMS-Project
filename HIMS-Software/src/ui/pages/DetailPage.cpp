@@ -77,6 +77,10 @@ void App::handleDetailKey(const KeyEvent& key) {
       chooseHimsFolder();
       return;
     }
+    if (ch == 'q') {
+      running_ = false;
+      return;
+    }
     switch (ch) {
       case 'e':
         beginEditCurrentItem(false);

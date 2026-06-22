@@ -8,6 +8,8 @@ enum class HimsKeyEventType {
   Add,
   Subtract,
   Cancel,
+  PowerToggle,
+  OtaUpdate,
   Other,
 };
 

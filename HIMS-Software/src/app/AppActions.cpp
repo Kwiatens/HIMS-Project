@@ -1150,29 +1150,31 @@ string App::activePrompt() const {
 
 string App::shortcutSummary() const {
   if (inputMode_ == InputMode::Search) {
-    return "Search: 'Enter' apply | 'Esc' cancel";
+    return "Search: Enter apply | Esc cancel";
   }
   if (inputMode_ == InputMode::EditFieldMenu) {
-    return "Edit fields: arrows choose | 'Enter' select | 'Esc' cancel";
+    return "Edit fields: Up/Down choose | Enter select | Esc cancel";
   }
   if (inputMode_ == InputMode::EditValue) {
-    return "Edit value: 'Enter' save | 'Esc' cancel";
+    return "Edit value: type to edit | Backspace delete | Enter save | Esc cancel";
   }
 
   switch (page_) {
     case Page::Dashboard:
-      return "Dashboard: '1' stock | '2' scanner | '3' add | '5/i' import | 'u' Scan R1 pairing | 'h' HIMS folder | 'l' printer | '/' search | 'q' quit";
+      return "Go: 1/Tab/Enter stock, 2 scanner | Create: 3 add, 5/i import | Setup: h folder, l printer, u pairing | Search: / or f | Reload: 4/r/d | Quit: q";
     case Page::Stock:
-      return "Stock: 'Tab'/'1' dashboard | 'Enter' detail | 'e' edit | 'n' new | 'Ctrl+Backspace' delete | 'Ctrl+Z' undo | 'h' HIMS folder | 'p' print | '+/-' qty | '/' search | 's' scanner | 'q' quit";
+      return "Navigate: Up/Down/j/k move, Enter detail, Tab dashboard | Edit: e edit, n new, +/- qty | Tools: / search, d datasheet, o product, g DigiKey, p print, s scanner | System: Ctrl+Z undo, Ctrl+Backspace delete, h folder, r reload, q quit";
     case Page::Detail:
-      return "Detail: 'Esc' stock | 'e' edit | 'p' print | '+/-' qty | 'Ctrl+Z' undo | 'h' HIMS folder | '/' search | 's' scanner | 'q' quit";
+      return "Navigate: Esc stock, Up/Down/j/k move | Edit: e edit, +/- qty | Tools: / search, d datasheet, o product, g DigiKey, p print, s scanner | System: Ctrl+Z undo, h folder, q quit";
+    case Page::PrinterSetup:
+      return "Select printer: Up/Down move, Enter apply | Actions: r refresh, t test, s save | Back: Esc dashboard, q quit";
     case Page::HimsScanSetup:
-      return "Scan R1 pairing: 'r' regenerate token | 'c' clear device | 'o' open scanner | Esc dashboard";
+      return "Actions: r regenerate token, c clear device, o open scanner, Enter open scanner | Back: Esc dashboard, q quit";
     case Page::ImportCsv:
       if (importSyncPrompt_) {
-        return "Import sync: 'Enter'/'y' sync with DigiKey API | 'n'/'Esc' finish";
+        return "Finish: Enter/y sync with DigiKey API | n/Esc finish without sync";
       }
-      return "Import CSV: arrows/j/k move | 'Enter' accept | 'e' edit | 'Backspace' skip | 'Esc' cancel";
+      return "Review: Up/Down/j/k move, Enter accept, e edit, Backspace skip, q cancel";
   }
 
   return {};

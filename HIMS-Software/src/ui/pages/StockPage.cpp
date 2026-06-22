@@ -174,6 +174,10 @@ void App::handleStockKey(const KeyEvent& key) {
       chooseHimsFolder();
       return;
     }
+    if (ch == 'q') {
+      running_ = false;
+      return;
+    }
   }
 
   if (deleteConfirmationActive()) {

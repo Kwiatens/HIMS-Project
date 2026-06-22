@@ -215,51 +215,18 @@ ftxui::Element App::renderStatusBarUi() const {
     start = separator + 3;
   }
 
-  auto segmentColor = [](const string& segment) {
-    const auto lower = toLower(segment);
-    if (lower.find("quit") != string::npos) {
-      return uiDangerColor();
-    }
-    if (lower.find("esc") != string::npos) {
-      return uiWarnColor();
-    }
-    if (lower.find("enter") != string::npos) {
-      return uiSuccessColor();
-    }
-    if (lower.find("scanner") != string::npos || lower.find("search") != string::npos) {
-      return uiLinkColor();
-    }
-    if (lower.find("printer") != string::npos || lower.find("print") != string::npos) {
-      return uiAccentColor();
-    }
-    if (lower.find("import") != string::npos || lower.find("add") != string::npos) {
-      return uiTitleColor();
-    }
-    return uiInfoColor();
-  };
-
   ftxui::Elements actions;
   for (size_t index = 0; index < segments.size(); ++index) {
     if (index > 0) {
-      actions.push_back(styledText(" • ", uiDimColor()));
+      actions.push_back(ftxui::text(" | "));
     }
-    actions.push_back(styledText(" " + segments[index] + " ", segmentColor(segments[index]), uiRowDarkBg()) |
-                      ftxui::bold);
+    actions.push_back(ftxui::text(segments[index]));
   }
 
-  const auto scannerStatus = server_.running() ? "Scanner bridge ready" : "Scanner bridge offline";
-  const auto printerStatus = printerService_.hasConfiguredPrinter()
-                                 ? (printerCheck_.ok ? "Printer ready" : "Printer needs attention")
-                                 : "Printer not configured";
-
   return ftxui::hbox({
-             styledText(scannerStatus, server_.running() ? uiInfoColor() : uiWarnColor()),
              ftxui::filler(),
              ftxui::hbox(move(actions)),
              ftxui::filler(),
-             styledText(printerStatus, printerService_.hasConfiguredPrinter()
-                                           ? (printerCheck_.ok ? uiSuccessColor() : uiWarnColor())
-                                           : uiMutedColor()),
          }) |
          ftxui::bgcolor(uiPanelRightBg());
 }

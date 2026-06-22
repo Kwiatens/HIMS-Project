@@ -1423,8 +1423,9 @@ string LabelPrinterService::buildZpl(const InventoryItem& item) const {
   }
   out << "\r\n";
 
-  out << "^FX --- Compact QR code ---\r\n";
-  out << "^FO160,10^BQN,2,4^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
+  out << "^FX --- QR code ---\r\n";
+  // Keep the QR symbol compact so it wraps less on curved labels.
+  out << "^FO170,10^BQN,2,3^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
   out << "\r\n";
 
   out << "^FX --- Human readable HIMS ID ---\r\n";

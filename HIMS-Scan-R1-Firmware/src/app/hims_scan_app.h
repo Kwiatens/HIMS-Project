@@ -19,9 +19,20 @@ class HimsScanApp {
     AwaitQuantity,
   };
 
+  enum class PowerMode {
+    Normal,
+    Standby,
+  };
+
   void handleScan(const String& code);
   void pollScanner();
   void handleKey(const HimsKeyEvent& event);
+  void requestOtaUpdate();
+  bool serviceOta();
+  bool startOtaService();
+  bool ensureWiFiForOta();
+  void enterStandby();
+  void exitStandby();
   void submitCurrent(char action);
   bool flushQueue();
   void reconnectWiFi();
@@ -38,9 +49,12 @@ class HimsScanApp {
   QuantityComposer quantity_;
   String scannedCode_;
   State state_ = State::Idle;
+  PowerMode powerMode_ = PowerMode::Normal;
   bool wifiStarted_ = false;
   bool wifiConnectedReported_ = false;
   bool himsSoftwarePrimed_ = false;
+  bool otaRequested_ = false;
+  bool otaActive_ = false;
   unsigned long lastReconnectAttempt_ = 0;
   unsigned long lastFlushAttempt_ = 0;
   unsigned long lastStatusAttempt_ = 0;

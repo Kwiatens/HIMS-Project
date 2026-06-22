@@ -1,5 +1,7 @@
 #include "app/hims_scan_app.h"
 
+#include <ArduinoOTA.h>
+
 #include "HimsScanCore.h"
 #include "config/config.h"
 
@@ -12,6 +14,9 @@ bool HimsScanApp::begin() {
   keypadInit();
   scanner_.begin(9600);
   scanner_.flushInput();
+  powerMode_ = PowerMode::Normal;
+  otaRequested_ = false;
+  otaActive_ = false;
 
   clientConfig_.deviceId = DEVICE_ID;
   clientConfig_.token = DEVICE_TOKEN;
@@ -39,15 +44,33 @@ bool HimsScanApp::begin() {
 }
 
 void HimsScanApp::loop() {
-  // Drain UART before any Wi-Fi operation that may briefly block.
-  pollScanner();
-  reconnectWiFi();
-  primeHimsSoftwareConnection();
-
   HimsKeyEvent event;
   while (keypadPoll(event)) {
     handleKey(event);
+    if (otaRequested_) {
+      break;
+    }
   }
+
+  if (powerMode_ == PowerMode::Standby) {
+    if (serviceOta()) {
+      delay(2);
+      return;
+    }
+    delay(20);
+    return;
+  }
+
+  // Drain UART before any Wi-Fi operation that may briefly block.
+  pollScanner();
+
+  if (serviceOta()) {
+    delay(2);
+    return;
+  }
+
+  reconnectWiFi();
+  primeHimsSoftwareConnection();
 
   const bool quantitySent = flushQueue();
   if (!quantitySent) {
@@ -83,6 +106,20 @@ void HimsScanApp::handleScan(const String& code) {
 }
 
 void HimsScanApp::handleKey(const HimsKeyEvent& event) {
+  if (event.type == HimsKeyEventType::OtaUpdate) {
+    requestOtaUpdate();
+    return;
+  }
+
+  if (event.type == HimsKeyEventType::PowerToggle) {
+    if (powerMode_ == PowerMode::Standby) {
+      exitStandby();
+    } else {
+      enterStandby();
+    }
+    return;
+  }
+
   if (event.type == HimsKeyEventType::Digit) {
     if (state_ == State::Idle) {
       Serial.println("Digit ignored, scan a code first.");
@@ -106,6 +143,184 @@ void HimsScanApp::handleKey(const HimsKeyEvent& event) {
       return;
     }
     submitCurrent(event.type == HimsKeyEventType::Add ? 'A' : 'B');
+  }
+}
+
+void HimsScanApp::requestOtaUpdate() {
+  if (otaRequested_) {
+    Serial.println("OTA update already requested.");
+    return;
+  }
+
+  resetPending();
+  otaRequested_ = true;
+  otaActive_ = false;
+  client_.end();
+  scanner_.flushInput();
+  if (powerMode_ == PowerMode::Standby) {
+    Serial.println("Waking standby path for OTA update.");
+  }
+  Serial.println("OTA update requested. Normal scanning is paused until the update finishes.");
+}
+
+bool HimsScanApp::serviceOta() {
+  if (!otaRequested_) {
+    return false;
+  }
+
+  if (trimCopy(WIFI_SSID).length() == 0) {
+    Serial.println("OTA request ignored because Wi-Fi credentials are empty.");
+    otaRequested_ = false;
+    otaActive_ = false;
+    return false;
+  }
+
+  if (!ensureWiFiForOta()) {
+    return true;
+  }
+
+  if (!otaActive_) {
+    if (!startOtaService()) {
+      Serial.println("OTA service failed to start; resuming normal operation.");
+      otaRequested_ = false;
+      otaActive_ = false;
+      return false;
+    }
+  }
+
+  ArduinoOTA.handle();
+  return true;
+}
+
+bool HimsScanApp::ensureWiFiForOta() {
+  if (WiFi.isConnected()) {
+    return true;
+  }
+
+  if (trimCopy(WIFI_SSID).length() == 0) {
+    Serial.println("OTA request ignored because Wi-Fi credentials are empty.");
+    otaRequested_ = false;
+    otaActive_ = false;
+    return false;
+  }
+
+  if (WiFi.getMode() != WIFI_STA) {
+    WiFi.mode(WIFI_STA);
+    delay(50);
+  }
+
+  if (millis() - lastReconnectAttempt_ < 2000UL) {
+    return false;
+  }
+  lastReconnectAttempt_ = millis();
+
+  Serial.print("Connecting for OTA to local Wi-Fi SSID: ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  return false;
+}
+
+bool HimsScanApp::startOtaService() {
+  WiFi.setSleep(false);
+  ArduinoOTA.setHostname(clientConfig_.deviceId.c_str());
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.onStart([this]() {
+    otaActive_ = true;
+    Serial.println("OTA start: flashing new firmware.");
+  });
+  ArduinoOTA.onEnd([this]() {
+    Serial.println();
+    Serial.println("OTA complete; restarting device.");
+    otaRequested_ = false;
+    otaActive_ = false;
+    delay(250);
+    ESP.restart();
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    if (total == 0U) {
+      return;
+    }
+    const unsigned int percent = (progress * 100U) / total;
+    Serial.printf("OTA progress: %u%%\r", percent);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.print("OTA error: ");
+    switch (error) {
+      case OTA_AUTH_ERROR:
+        Serial.println("authentication failed");
+        break;
+      case OTA_BEGIN_ERROR:
+        Serial.println("begin failed");
+        break;
+      case OTA_CONNECT_ERROR:
+        Serial.println("connection failed");
+        break;
+      case OTA_RECEIVE_ERROR:
+        Serial.println("receive failed");
+        break;
+      case OTA_END_ERROR:
+        Serial.println("end failed");
+        break;
+      default:
+        Serial.println("unknown");
+        break;
+    }
+  });
+
+  ArduinoOTA.begin();
+  otaActive_ = true;
+  Serial.print("OTA update ready for ");
+  Serial.print(clientConfig_.deviceId.c_str());
+  Serial.print(" at ");
+  Serial.println(WiFi.localIP());
+  return true;
+}
+
+void HimsScanApp::enterStandby() {
+  if (powerMode_ == PowerMode::Standby) {
+    return;
+  }
+
+  Serial.println("Entering standby mode.");
+  resetPending();
+  otaRequested_ = false;
+  otaActive_ = false;
+  lastReconnectAttempt_ = 0;
+  lastFlushAttempt_ = 0;
+  lastStatusAttempt_ = 0;
+  wifiConnectedReported_ = false;
+  himsSoftwarePrimed_ = false;
+
+  client_.end();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  scanner_.suspend();
+  powerMode_ = PowerMode::Standby;
+  Serial.println("Standby mode active. Hold D again to wake.");
+}
+
+void HimsScanApp::exitStandby() {
+  if (powerMode_ != PowerMode::Standby) {
+    return;
+  }
+
+  Serial.println("Waking from standby mode.");
+  scanner_.resume();
+  client_.begin(clientConfig_);
+  wifiStarted_ = true;
+  wifiConnectedReported_ = false;
+  himsSoftwarePrimed_ = false;
+  lastReconnectAttempt_ = 0;
+  lastFlushAttempt_ = 0;
+  lastStatusAttempt_ = 0;
+  powerMode_ = PowerMode::Normal;
+
+  if (WIFI_AUTOSTART && trimCopy(WIFI_SSID).length() > 0) {
+    Serial.print("Reconnecting after standby to local Wi-Fi SSID: ");
+    Serial.println(WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  } else {
+    Serial.println("Standby exit complete; Wi-Fi remains offline.");
   }
 }
 
@@ -172,7 +387,11 @@ void HimsScanApp::reconnectWiFi() {
     return;
   }
 
-  if (!WIFI_AUTOSTART) {
+  if (powerMode_ == PowerMode::Standby) {
+    return;
+  }
+
+  if (!WIFI_AUTOSTART && !otaRequested_ && !otaActive_) {
     return;
   }
 

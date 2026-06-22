@@ -353,7 +353,7 @@ int main() {
     assert(zpl.find("^FO10,100^A0N,16,16^FDYageo^FS") != string::npos);
     assert(zpl.find("^BQN,2,2") != string::npos);
     assert(zpl.find("^FDLA,0002^FS") != string::npos);
-    assert(zpl.find("^FO200,55^A0R,13,13^FDHIMS:R-0002^FS") != string::npos);
+    assert(zpl.find("^FO162,155^A0N,13,13^FDHIMS:R-0002^FS") != string::npos);
     assert(zpl.find("^BC") == string::npos);
 
     string error;

@@ -9,6 +9,7 @@ const bool WIFI_AUTOSTART = true;
 
 const char DEVICE_ID[] = "HIMS-SCAN-R1";
 const char DEVICE_TOKEN[] = "paste-your-hims-pairing-token-here";
+const char OTA_PASSWORD[] = "paste-your-ota-password-here";
 
 // Optional fallback if mDNS discovery fails.
 const char FALLBACK_HOST[] = "";

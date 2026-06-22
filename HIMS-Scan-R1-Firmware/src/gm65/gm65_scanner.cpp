@@ -23,7 +23,7 @@ constexpr ZoneWrite kBootProfile[] = {
     {0x0030, 0x00},  // UPCA off
     {0x0031, 0x00},  // UPCE0 off
     {0x0032, 0x00},  // UPCE1 off
-    {0x0033, 0x01},  // Code128 on
+    {0x0033, 0x00},  // Code128 on
     {0x0036, 0x00},  // Code39 off
     {0x0039, 0x00},  // Code93 off
     {0x003C, 0x00},  // Codabar off
@@ -44,15 +44,46 @@ constexpr ZoneWrite kBootProfile[] = {
 }  // namespace
 
 bool Gm65Scanner::begin(uint32_t baudRate) {
+  baudRate_ = baudRate;
   buffer_.clear();
   lastByteAt_ = 0;
   serial_.setRxBufferSize(1024);
-  serial_.begin(baudRate, SERIAL_8N1, GM65_RX_PIN, GM65_TX_PIN);
+  serial_.begin(baudRate_, SERIAL_8N1, GM65_RX_PIN, GM65_TX_PIN);
   serial_.setTimeout(5);
   delay(100);
   applyBootProfile();
   flushInput();
+  active_ = true;
   return true;
+}
+
+void Gm65Scanner::end() {
+  serial_.end();
+  active_ = false;
+  buffer_.clear();
+  lastByteAt_ = 0;
+}
+
+bool Gm65Scanner::suspend() {
+  if (!active_) {
+    return true;
+  }
+  end();
+  return true;
+}
+
+bool Gm65Scanner::resume() {
+  if (active_) {
+    return true;
+  }
+  serial_.setRxBufferSize(1024);
+  serial_.begin(baudRate_, SERIAL_8N1, GM65_RX_PIN, GM65_TX_PIN);
+  serial_.setTimeout(5);
+  delay(100);
+  const bool ok = applyBootProfile();
+  flushInput();
+  active_ = true;
+  return ok;
 }
 
 void Gm65Scanner::flushInput() {
@@ -61,6 +92,10 @@ void Gm65Scanner::flushInput() {
   }
   buffer_.clear();
   lastByteAt_ = 0;
+}
+
+bool Gm65Scanner::active() const {
+  return active_;
 }
 
 uint16_t Gm65Scanner::crcCcitt(const uint8_t* bytes, size_t length) {

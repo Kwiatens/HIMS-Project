@@ -179,6 +179,8 @@ void App::handlePrinterSetupKey(const KeyEvent& key) {
       if (ch == 'r') {
         refreshPrinterState();
         setMessage("Printer list refreshed", 2);
+      } else if (ch == 'q') {
+        running_ = false;
       }
     } else if (key.type == KeyType::Escape) {
       changePage(Page::Dashboard);
@@ -192,6 +194,9 @@ void App::handlePrinterSetupKey(const KeyEvent& key) {
       case 'r':
         refreshPrinterState();
         setMessage("Printer list refreshed", 2);
+        return;
+      case 'q':
+        running_ = false;
         return;
       case 't':
         if (const auto* printer = selectedPrinterQueue()) {
@@ -209,9 +214,6 @@ void App::handlePrinterSetupKey(const KeyEvent& key) {
           changePage(Page::Dashboard);
           setMessage(printerCheck_.ok ? "Printer saved and ready" : "Printer saved, but not ready", 3);
         }
-        return;
-      case 'q':
-        changePage(Page::Dashboard);
         return;
       default:
         break;

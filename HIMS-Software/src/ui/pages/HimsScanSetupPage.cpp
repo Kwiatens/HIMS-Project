@@ -123,6 +123,10 @@ void App::handleHimsScanSetupKey(const KeyEvent& key) {
       setMessage("Opened the mobile scanner page", 3);
       return;
     }
+    if (ch == 'q') {
+      running_ = false;
+      return;
+    }
   }
 
   if (key.type == KeyType::Enter) {
