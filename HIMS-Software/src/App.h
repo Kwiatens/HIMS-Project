@@ -44,6 +44,7 @@ class App {
     Dashboard,
     Stock,
     Detail,
+    RackManagement,
     PrinterSetup,
     HimsScanSetup,
     ImportCsv,
@@ -54,6 +55,11 @@ class App {
     Search,
     EditFieldMenu,
     EditValue,
+    RackRename,
+    RackType,
+    RackCreate,
+    RackJump,
+    RackFilter,
   };
 
   enum class EditField {
@@ -108,12 +114,14 @@ class App {
   void handleDashboardKey(const KeyEvent& key);
   void handleStockKey(const KeyEvent& key);
   void handleDetailKey(const KeyEvent& key);
+  void handleRackManagementKey(const KeyEvent& key);
   void handlePrinterSetupKey(const KeyEvent& key);
   void handleHimsScanSetupKey(const KeyEvent& key);
   void handleImportCsvKey(const KeyEvent& key);
   void handleSearchKey(const KeyEvent& key);
   void handleEditMenuKey(const KeyEvent& key);
   void handleEditValueKey(const KeyEvent& key);
+  void handleRackValueKey(const KeyEvent& key);
 
   void render();
   void renderDashboard(std::ostringstream& out, const ConsoleSize& size);
@@ -128,6 +136,7 @@ class App {
   ftxui::Element renderDashboardUi() const;
   ftxui::Element renderStockUi() const;
   ftxui::Element renderDetailUi() const;
+  ftxui::Element renderRackManagementUi() const;
   ftxui::Element renderPrinterSetupUi() const;
   ftxui::Element renderHimsScanSetupUi() const;
   ftxui::Element renderImportCsvUi() const;
@@ -170,6 +179,27 @@ class App {
   bool deleteConfirmationReady() const;
   int deleteConfirmationSecondsLeft() const;
   void openSelectedDetail();
+  void openRackManagement();
+  std::vector<size_t> sortedRackIndices() const;
+  const HimsRack* selectedRack() const;
+  HimsRack* selectedRack();
+  std::string selectedRackSlot() const;
+  InventoryItem* selectedRackItem();
+  const InventoryItem* selectedRackItem() const;
+  void syncRackSelection();
+  void moveRackSlot(int rowDelta, int columnDelta);
+  void moveRackPage(int delta);
+  void beginOrCompleteRackMove();
+  void unassignSelectedRackItem();
+  void autoAssignSelectedRackItem();
+  void renameSelectedRack(const std::string& value);
+  void changeSelectedRackType(const std::string& value);
+  void createRackWithType(const std::string& value);
+  void deleteSelectedRack();
+  void jumpToRack(const std::string& value);
+  void beginRackFilter();
+  bool printSelectedRackPartLabel();
+  bool printSelectedRackLabel();
   void startSearch();
   void cancelInput();
   void beginEditCurrentItem(bool createNew);
@@ -226,6 +256,12 @@ class App {
   size_t selectedPosition_ = 0;
   size_t stockScroll_ = 0;
   size_t detailScroll_ = 0;
+  size_t rackSelection_ = 0;
+  int rackRow_ = 0;
+  int rackColumn_ = 0;
+  std::string movingRackItemId_;
+  std::string movingRackSource_;
+  std::string rackFilter_;
   std::vector<std::string> scanQueue_;
   std::vector<CsvImportCandidate> importCandidates_;
   std::vector<std::string> importAcceptedItemIds_;

@@ -48,6 +48,11 @@ struct HimsLabelPlan {
   string rackLocation;
 };
 
+struct HimsRackLabelPlan {
+  string categoryText;
+  string rackText;
+};
+
 class PrinterBackend {
  public:
   virtual ~PrinterBackend() = default;
@@ -76,6 +81,9 @@ class LabelPrinterService {
   HimsLabelPlan buildLabelPlan(const InventoryItem& item, string rackLocation = {}) const;
   string buildZpl(const InventoryItem& item, string rackLocation = {}) const;
   bool printItemLabel(const InventoryItem& item, string* error, string rackLocation = {}) const;
+  HimsRackLabelPlan buildRackLabelPlan(const HimsRack& rack) const;
+  string buildRackLabelZpl(const HimsRack& rack) const;
+  bool printRackLabel(const HimsRack& rack, string* error) const;
 
   string summaryText() const;
 

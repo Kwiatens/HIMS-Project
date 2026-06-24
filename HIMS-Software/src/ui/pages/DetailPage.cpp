@@ -90,6 +90,9 @@ void App::handleDetailKey(const KeyEvent& key) {
       case 'e':
         beginEditCurrentItem(false);
         break;
+      case 'm':
+        openRackManagement();
+        break;
       case '+':
         adjustQuantity(1);
         break;

@@ -113,6 +113,10 @@ bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item) {
   if (item.rackAssignment != RackAssignmentMode::Automatic) return false;
   const auto componentType = componentTypeFor(item);
   auto* currentRack = findRack(store, item.rackId);
+  if (currentRack != nullptr && isValidRackSlot(item.rackSlot) &&
+      !slotOccupied(store, item.rackId, item.rackSlot, &item)) {
+    return false;
+  }
   if (!componentType) {
     const bool changed = !item.rackId.empty() || !item.rackSlot.empty();
     item.rackId.clear();
@@ -134,6 +138,7 @@ bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item) {
     if (!slot.empty()) {
       item.rackId = rack->id;
       item.rackSlot = slot;
+      item.rackAssignment = RackAssignmentMode::Manual;
       return true;
     }
   }
@@ -148,6 +153,7 @@ bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item) {
   store.racks().push_back(rack);
   item.rackId = rack.id;
   item.rackSlot = "A1";
+  item.rackAssignment = RackAssignmentMode::Manual;
   return true;
 }
 
@@ -199,6 +205,70 @@ bool setManualRackLocation(InventoryStore& store, InventoryItem& item, const str
   item.rackSlot = slot;
   item.rackAssignment = RackAssignmentMode::Manual;
   return true;
+}
+
+int rackNumberFromCode(const string& code) {
+  return rackNumber(code);
+}
+
+string rackSlotLabel(int row, int column) {
+  if (row < 0 || row >= 5 || column < 0 || column >= 5) return {};
+  return string(1, static_cast<char>('A' + row)) + to_string(column + 1);
+}
+
+size_t rackOccupiedSlotCount(const InventoryStore& store, const HimsRack& rack) {
+  return static_cast<size_t>(count_if(store.items().begin(), store.items().end(), [&](const InventoryItem& item) {
+    return item.rackId == rack.id && isValidRackSlot(item.rackSlot);
+  }));
+}
+
+InventoryItem* itemAtRackSlot(InventoryStore& store, const string& rackId, const string& slot) {
+  const auto normalizedSlot = trim(slot);
+  const auto it = find_if(store.items().begin(), store.items().end(), [&](const InventoryItem& item) {
+    return item.rackId == rackId && item.rackSlot == normalizedSlot;
+  });
+  return it == store.items().end() ? nullptr : &*it;
+}
+
+const InventoryItem* itemAtRackSlot(const InventoryStore& store, const string& rackId, const string& slot) {
+  const auto normalizedSlot = trim(slot);
+  const auto it = find_if(store.items().begin(), store.items().end(), [&](const InventoryItem& item) {
+    return item.rackId == rackId && item.rackSlot == normalizedSlot;
+  });
+  return it == store.items().end() ? nullptr : &*it;
+}
+
+bool moveItemToRackSlot(InventoryStore& store, InventoryItem& item, const HimsRack& rack, const string& slot,
+                        string& error) {
+  error.clear();
+  if (!isValidRackSlot(slot)) {
+    error = "Rack slot must be A1 through E5";
+    return false;
+  }
+  if (slotOccupied(store, rack.id, slot, &item)) {
+    error = rack.code + "-" + slot + " is already occupied";
+    return false;
+  }
+  item.rackId = rack.id;
+  item.rackSlot = slot;
+  item.rackAssignment = RackAssignmentMode::Manual;
+  return true;
+}
+
+bool unassignItemFromRack(InventoryItem& item) {
+  const bool changed = item.rackAssignment != RackAssignmentMode::Unassigned || !item.rackId.empty() ||
+                       !item.rackSlot.empty();
+  item.rackId.clear();
+  item.rackSlot.clear();
+  item.rackAssignment = RackAssignmentMode::Unassigned;
+  return changed;
+}
+
+bool restoreAutomaticRackAssignment(InventoryStore& store, InventoryItem& item) {
+  item.rackId.clear();
+  item.rackSlot.clear();
+  item.rackAssignment = RackAssignmentMode::Automatic;
+  return reconcileRackAssignment(store, item);
 }
 
 }  // namespace hims

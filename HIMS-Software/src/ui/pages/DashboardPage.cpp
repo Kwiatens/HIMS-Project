@@ -530,6 +530,9 @@ void App::handleDashboardKey(const KeyEvent& key) {
       case 'i':
         beginCsvImport();
         break;
+      case 'm':
+        openRackManagement();
+        break;
       case 'h':
         chooseHimsFolder();
         break;

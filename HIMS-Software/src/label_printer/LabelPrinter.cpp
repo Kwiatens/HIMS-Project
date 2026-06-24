@@ -1009,6 +1009,33 @@ string makeJobName(const InventoryItem& item) {
   return "HIMS Label";
 }
 
+string rackDisplayCategory(string value) {
+  value = displayCategory(value);
+  replace(value.begin(), value.end(), '-', ' ');
+  replace(value.begin(), value.end(), '_', ' ');
+  value = trim(value);
+  if (value.empty()) {
+    return "RACK";
+  }
+  return uppercaseAscii(fieldOrBlank(value, 20));
+}
+
+string rackLabelText(const string& code) {
+  const auto number = rackNumberFromCode(code);
+  if (number > 0) {
+    ostringstream out;
+    out << "RACK " << setw(2) << setfill('0') << number;
+    return out.str();
+  }
+  const auto cleaned = trim(code);
+  return cleaned.empty() ? "RACK" : fieldOrBlank("RACK " + cleaned, 12);
+}
+
+string makeRackJobName(const HimsRack& rack) {
+  const auto code = trim(rack.code);
+  return code.empty() ? "HIMS Rack" : "HIMS Rack " + code;
+}
+
 #ifdef _WIN32
 PrinterQueueInfo makePrinterInfo(const wstring& name, const wstring& driver, const wstring& port, DWORD status,
                                  bool isDefault) {
@@ -1427,7 +1454,7 @@ string LabelPrinterService::buildZpl(const InventoryItem& item, string rackLocat
 
   out << "^FX --- QR code ---\r\n";
   // Keep the QR symbol compact so it wraps less on curved labels.
-  out << "^FO170,10^BQN,2,3^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
+  out << "^FO170,90^BQN,2,3^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
   out << "\r\n";
 
   out << "^FX --- Human readable HIMS ID ---\r\n";
@@ -1459,6 +1486,66 @@ bool LabelPrinterService::printItemLabel(const InventoryItem& item, string* erro
 
   const auto zpl = buildZpl(item, move(rackLocation));
   return backend_->sendRawJob(configuredPrinter_, makeJobName(item), zpl, error);
+}
+
+HimsRackLabelPlan LabelPrinterService::buildRackLabelPlan(const HimsRack& rack) const {
+  HimsRackLabelPlan plan;
+  plan.categoryText = rackDisplayCategory(rack.componentType);
+  plan.rackText = rackLabelText(rack.code);
+  return plan;
+}
+
+string LabelPrinterService::buildRackLabelZpl(const HimsRack& rack) const {
+  const auto plan = buildRackLabelPlan(rack);
+  ostringstream out;
+  out << "^XA\r\n";
+  out << "^CI28\r\n";
+  out << "^PW256\r\n";
+  out << "^LL200\r\n";
+  out << "^LH0,0\r\n";
+  out << "^PR3\r\n";
+  out << "^MD12\r\n";
+  out << "\r\n";
+
+  out << "^FX --- Black header bar ---\r\n";
+  out << "^FO4,4^GB248,28,28,B,5^FS\r\n";
+  out << "^FO12,11^A0N,16,16^FR^FDHIMS RACK^FS\r\n";
+  out << "\r\n";
+
+  out << "^FX --- Main category text ---\r\n";
+  out << "^FO6,55^A0N,40,34^FB244,1,0,C^FD" << sanitizeLabelText(plan.categoryText) << "^FS\r\n";
+  out << "\r\n";
+
+  out << "^FX --- Thin separator under category ---\r\n";
+  out << "^FO34,105^GB188,2,2^FS\r\n";
+  out << "\r\n";
+
+  out << "^FX --- Rack ID pill ---\r\n";
+  out << "^FO43,128^GB170,42,42,B,5^FS\r\n";
+  out << "^FO43,138^A0N,23,23^FR^FB170,1,0,C^FD" << sanitizeLabelText(plan.rackText) << "^FS\r\n";
+  out << "\r\n";
+
+  out << "^XZ\r\n";
+  return out.str();
+}
+
+bool LabelPrinterService::printRackLabel(const HimsRack& rack, string* error) const {
+  if (backend_ == nullptr) {
+    if (error != nullptr) {
+      *error = "Printer backend unavailable";
+    }
+    return false;
+  }
+
+  if (!hasConfiguredPrinter()) {
+    if (error != nullptr) {
+      *error = "No printer configured";
+    }
+    return false;
+  }
+
+  const auto zpl = buildRackLabelZpl(rack);
+  return backend_->sendRawJob(configuredPrinter_, makeRackJobName(rack), zpl, error);
 }
 
 string LabelPrinterService::summaryText() const {

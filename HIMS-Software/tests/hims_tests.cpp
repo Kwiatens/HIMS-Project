@@ -230,6 +230,35 @@ int main() {
     reconcileRackAssignment(rackStore, rackStore.items().back());
     assert(rackStore.racks().size() == 3);
     assert(rackLocation(rackStore.items().back(), rackStore.racks()) == "R3-A1");
+    assert(rackOccupiedSlotCount(rackStore, rackStore.racks()[0]) == 25);
+    assert(rackOccupiedSlotCount(rackStore, rackStore.racks()[1]) == 1);
+    assert(itemAtRackSlot(rackStore, rackStore.racks()[0].id, "A1") == &rackStore.items()[0]);
+    assert(itemAtRackSlot(rackStore, rackStore.racks()[0].id, "E5") == &rackStore.items()[24]);
+    assert(itemAtRackSlot(rackStore, rackStore.racks()[0].id, "B5") == &rackStore.items()[9]);
+    assert(itemAtRackSlot(rackStore, rackStore.racks()[1].id, "E5") == nullptr);
+    assert(rackSlotLabel(0, 0) == "A1");
+    assert(rackSlotLabel(4, 4) == "E5");
+    assert(rackSlotLabel(5, 0).empty());
+
+    string moveError;
+    assert(!moveItemToRackSlot(rackStore, rackStore.items()[0], rackStore.racks()[0], "A2", moveError));
+    assert(moveError.find("occupied") != string::npos);
+    assert(moveItemToRackSlot(rackStore, rackStore.items()[0], rackStore.racks()[1], "E5", moveError));
+    assert(rackStore.items()[0].rackAssignment == RackAssignmentMode::Manual);
+    assert(rackLocation(rackStore.items()[0], rackStore.racks()) == "R2-E5");
+    assert(itemAtRackSlot(rackStore, rackStore.racks()[1].id, "E5") == &rackStore.items()[0]);
+    assert(rackOccupiedSlotCount(rackStore, rackStore.racks()[0]) == 24);
+    assert(rackOccupiedSlotCount(rackStore, rackStore.racks()[1]) == 2);
+    assert(unassignItemFromRack(rackStore.items()[0]));
+    reconcileRackAssignment(rackStore, rackStore.items()[0]);
+    assert(rackStore.items()[0].rackAssignment == RackAssignmentMode::Unassigned);
+    assert(rackLocation(rackStore.items()[0], rackStore.racks()).empty());
+    restoreAutomaticRackAssignment(rackStore, rackStore.items()[0]);
+    assert(rackStore.items()[0].rackAssignment == RackAssignmentMode::Manual);
+    assert(rackLocation(rackStore.items()[0], rackStore.racks()) == "R1-A1");
+    rackStore.items()[0].category = "Capacitors";
+    reconcileRackAssignment(rackStore, rackStore.items()[0]);
+    assert(rackLocation(rackStore.items()[0], rackStore.racks()) == "R1-A1");
 
     InventoryItem module;
     module.id = "rack-module";
@@ -281,7 +310,7 @@ int main() {
     assert(rackLocation(manuallyPlaced, rackStore.racks()).empty());
     assert(setManualRackLocation(rackStore, manuallyPlaced, "AUTO", error));
     reconcileRackAssignment(rackStore, manuallyPlaced);
-    assert(manuallyPlaced.rackAssignment == RackAssignmentMode::Automatic);
+    assert(manuallyPlaced.rackAssignment == RackAssignmentMode::Manual);
     assert(!rackLocation(manuallyPlaced, rackStore.racks()).empty());
     const auto automaticLocation = rackLocation(manuallyPlaced, rackStore.racks());
     assert(matchesQuery(manuallyPlaced, "rack:" + automaticLocation, rackStore.racks()));
@@ -467,6 +496,37 @@ int main() {
     assert(backendPtr->lastPrinterName_ == "ZDesigner LP 2824 Plus (ZPL)");
     assert(backendPtr->lastJobName_.find("HIMS Label") == 0);
     assert(backendPtr->lastZpl_.find("^FDLA,0002^FS") != string::npos);
+
+    HimsRack resistorRack;
+    resistorRack.id = "rack-res-1";
+    resistorRack.code = "R1";
+    resistorRack.componentType = "resistors";
+    const auto rackLabelPlan = service.buildRackLabelPlan(resistorRack);
+    assert(rackLabelPlan.categoryText == "RESISTORS");
+    assert(rackLabelPlan.rackText == "RACK 01");
+    const auto rackLabelZpl = service.buildRackLabelZpl(resistorRack);
+    assert(rackLabelZpl.find("^FDHIMS RACK^FS") != string::npos);
+    assert(rackLabelZpl.find("^FDRESISTORS^FS") != string::npos);
+    assert(rackLabelZpl.find("^FDRACK 01^FS") != string::npos);
+    assert(rackLabelZpl.find("^GFA") == string::npos);
+    assert(rackLabelZpl.find("^FO6,55^A0N,40,34^FB244,1,0,C^FDRESISTORS^FS") != string::npos);
+
+    HimsRack customRack;
+    customRack.id = "rack-custom-1";
+    customRack.code = "R12";
+    customRack.componentType = "smd widgets";
+    const auto customRackPlan = service.buildRackLabelPlan(customRack);
+    assert(customRackPlan.categoryText == "SMD WIDGETS");
+    assert(customRackPlan.rackText == "RACK 12");
+    const auto customRackZpl = service.buildRackLabelZpl(customRack);
+    assert(customRackZpl.find("^FDSMD WIDGETS^FS") != string::npos);
+    assert(customRackZpl.find("^GFA") == string::npos);
+
+    error.clear();
+    assert(service.printRackLabel(resistorRack, &error));
+    assert(error.empty());
+    assert(backendPtr->lastJobName_ == "HIMS Rack R1");
+    assert(backendPtr->lastZpl_.find("^FDRACK 01^FS") != string::npos);
 
     InventoryItem tvsDiode;
     tvsDiode.id = "tvs-1";

@@ -227,6 +227,9 @@ void App::handleStockKey(const KeyEvent& key) {
       case 'n':
         beginEditCurrentItem(true);
         break;
+      case 'm':
+        openRackManagement();
+        break;
       case '+':
         adjustQuantity(1);
         break;

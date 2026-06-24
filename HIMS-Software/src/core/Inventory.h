@@ -150,6 +150,15 @@ bool isValidRackSlot(const string& slot);
 bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item);
 bool reconcileRackAssignments(InventoryStore& store);
 bool setManualRackLocation(InventoryStore& store, InventoryItem& item, const string& value, string& error);
+int rackNumberFromCode(const string& code);
+string rackSlotLabel(int row, int column);
+size_t rackOccupiedSlotCount(const InventoryStore& store, const HimsRack& rack);
+InventoryItem* itemAtRackSlot(InventoryStore& store, const string& rackId, const string& slot);
+const InventoryItem* itemAtRackSlot(const InventoryStore& store, const string& rackId, const string& slot);
+bool moveItemToRackSlot(InventoryStore& store, InventoryItem& item, const HimsRack& rack, const string& slot,
+                        string& error);
+bool unassignItemFromRack(InventoryItem& item);
+bool restoreAutomaticRackAssignment(InventoryStore& store, InventoryItem& item);
 
 bool loadActivities(const filesystem::path& path, vector<ActivityEntry>& activities);
 bool saveActivities(const filesystem::path& path, const vector<ActivityEntry>& activities);

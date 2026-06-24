@@ -155,6 +155,8 @@ ftxui::Element App::renderPageUi() const {
       return renderStockUi();
     case Page::Detail:
       return renderDetailUi();
+    case Page::RackManagement:
+      return renderRackManagementUi();
     case Page::PrinterSetup:
       return renderPrinterSetupUi();
     case Page::HimsScanSetup:
@@ -168,13 +170,22 @@ ftxui::Element App::renderPageUi() const {
 
 ftxui::Element App::renderSearchBarUi() const {
   const auto activeBg = inputMode_ == InputMode::Search || inputMode_ == InputMode::EditValue
+                            || inputMode_ == InputMode::RackRename || inputMode_ == InputMode::RackType
+                            || inputMode_ == InputMode::RackCreate || inputMode_ == InputMode::RackJump
+                            || inputMode_ == InputMode::RackFilter
                             ? uiRowSelectedBg()
                             : uiPanelLeftBg();
   const auto bodyColor = inputMode_ == InputMode::Search ? uiTitleColor()
-                          : inputMode_ == InputMode::EditValue ? uiLinkColor()
+                          : inputMode_ == InputMode::EditValue || inputMode_ == InputMode::RackRename ||
+                                    inputMode_ == InputMode::RackType || inputMode_ == InputMode::RackCreate ||
+                                    inputMode_ == InputMode::RackJump || inputMode_ == InputMode::RackFilter
+                                ? uiLinkColor()
                                                                : uiMutedColor();
   const auto bodyText = inputMode_ == InputMode::Search ? "/" + inputBuffer_ + "_"
-                        : inputMode_ == InputMode::EditValue ? activePrompt() + inputBuffer_ + "_"
+                        : inputMode_ == InputMode::EditValue || inputMode_ == InputMode::RackRename ||
+                                  inputMode_ == InputMode::RackType || inputMode_ == InputMode::RackCreate ||
+                                  inputMode_ == InputMode::RackJump || inputMode_ == InputMode::RackFilter
+                              ? activePrompt() + inputBuffer_ + "_"
                                                              : "/" + searchQuery_;
 
   ftxui::Elements rows;
@@ -315,6 +326,13 @@ void App::handleKey(const KeyEvent& key) {
     case InputMode::EditValue:
       handleEditValueKey(key);
       return;
+    case InputMode::RackRename:
+    case InputMode::RackType:
+    case InputMode::RackCreate:
+    case InputMode::RackJump:
+    case InputMode::RackFilter:
+      handleRackValueKey(key);
+      return;
     case InputMode::None:
       break;
   }
@@ -328,6 +346,9 @@ void App::handleKey(const KeyEvent& key) {
       break;
     case Page::Detail:
       handleDetailKey(key);
+      break;
+    case Page::RackManagement:
+      handleRackManagementKey(key);
       break;
     case Page::PrinterSetup:
       handlePrinterSetupKey(key);
@@ -429,6 +450,57 @@ void App::handleEditValueKey(const KeyEvent& key) {
     inputBuffer_.clear();
     inputMode_ = InputMode::EditFieldMenu;
     setMessage("Edit cancelled", 2);
+  }
+}
+
+void App::handleRackValueKey(const KeyEvent& key) {
+  if (key.type == KeyType::Character) {
+    inputBuffer_.push_back(key.ch);
+    dirty_ = true;
+    return;
+  }
+
+  if (key.type == KeyType::Backspace) {
+    if (!inputBuffer_.empty()) {
+      inputBuffer_.pop_back();
+      dirty_ = true;
+    }
+    return;
+  }
+
+  if (key.type == KeyType::Enter) {
+    const auto value = inputBuffer_;
+    const auto mode = inputMode_;
+    inputBuffer_.clear();
+    inputMode_ = InputMode::None;
+    switch (mode) {
+      case InputMode::RackRename:
+        renameSelectedRack(value);
+        break;
+      case InputMode::RackType:
+        changeSelectedRackType(value);
+        break;
+      case InputMode::RackCreate:
+        createRackWithType(value);
+        break;
+      case InputMode::RackJump:
+        jumpToRack(value);
+        break;
+      case InputMode::RackFilter:
+        rackFilter_ = trim(value);
+        syncRackSelection();
+        setMessage(rackFilter_.empty() ? "Rack filter cleared" : "Rack filter applied", 2);
+        break;
+      default:
+        break;
+    }
+    return;
+  }
+
+  if (key.type == KeyType::Escape) {
+    inputBuffer_.clear();
+    inputMode_ = InputMode::None;
+    setMessage("Rack input cancelled", 2);
   }
 }
 
