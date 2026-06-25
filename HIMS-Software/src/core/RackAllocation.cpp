@@ -17,6 +17,16 @@ bool containsAny(const string& text, initializer_list<const char*> values) {
   return any_of(values.begin(), values.end(), [&](const char* value) { return containsInsensitive(text, value); });
 }
 
+string normalizedRackType(string value) {
+  value = toLower(trim(value));
+  value.erase(remove_if(value.begin(), value.end(), [](unsigned char ch) { return !isalnum(ch); }), value.end());
+  return value;
+}
+
+bool sameRackType(const string& lhs, const string& rhs) {
+  return normalizedRackType(lhs) == normalizedRackType(rhs);
+}
+
 string classificationText(const InventoryItem& item) {
   string text = item.category + " " + item.partName + " " + item.notes;
   for (const auto& tag : item.tags) text += " " + tag;
@@ -64,20 +74,24 @@ bool isSmdRackEligible(const string& text) {
 
 optional<string> componentTypeFor(const InventoryItem& item) {
   const auto text = classificationText(item);
-  if (!isSmdRackEligible(text)) return nullopt;
-  if (containsAny(text, {"resistor", "resistors"})) return "resistors";
-  if (containsAny(text, {"capacitor", "capacitors"})) return "capacitors";
-  if (containsAny(text, {"inductor", "inductors", "choke", "coil"})) return "inductors";
-  if (containsAny(text, {"diode", "diodes", "rectifier", "schottky", "zener", "tvs"})) return "diodes";
-  if (containsAny(text, {"indicator", "indicators", " led", "led ", "light emitting"})) return "indicators";
-  if (containsAny(text, {"fuse", "fuses"})) return "fuses";
-  if (containsAny(text, {"crystal", "oscillator", "resonator"})) return "timing";
-  if (containsAny(text, {"transistor", "mosfet", " fet", "bjt"})) {
-    return hasCompactSemiconductorPackage(text) ? optional<string>("transistors") : nullopt;
+  if (containsAny(text, {"fuse", "fuses"})) return "Fuses";
+  if (containsAny(text, {"connector", "connectors"})) return "Connectors";
+  if (containsAny(text, {"transistor", "transistors", "mosfet", " fet", "bjt", "npn", "pnp"})) {
+    return "Transistors";
   }
-  if (containsAny(text, {"integrated circuit", "microcontroller", " mcu", "logic", "memory", "op amp", "op-amp",
-                         "amplifier", "regulator", "power management", "converter ic"})) {
-    return hasCompactSemiconductorPackage(text) ? optional<string>("integrated-circuits") : nullopt;
+  if (containsAny(text, {"integrated circuit", "integrated circuits", "microcontroller", " mcu", "logic", "memory",
+                         "op amp", "op-amp", "amplifier", "regulator", "power management", "converter ic",
+                         "switching regulator", "buck", "boost", "step-down", "step-up", "pmic"})) {
+    return "Integrated Circuits";
+  }
+  if (!isSmdRackEligible(text)) return nullopt;
+  if (containsAny(text, {"resistor", "resistors"})) return "Resistors";
+  if (containsAny(text, {"capacitor", "capacitors"})) return "Capacitors";
+  if (containsAny(text, {"inductor", "inductors", "choke", "coil"})) return "Inductors";
+  if (containsAny(text, {"diode", "diodes", "rectifier", "schottky", "zener", "tvs"})) return "Diodes";
+  if (containsAny(text, {"indicator", "indicators", " led", "led ", "light emitting"})) return "Indicators";
+  if (containsAny(text, {"crystal", "oscillator", "resonator"})) {
+    return "Timing";
   }
   return nullopt;
 }
@@ -147,13 +161,14 @@ bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item) {
     item.rackAssignment = RackAssignmentMode::Unassigned;
     return changed;
   }
-  if (currentRack != nullptr && currentRack->componentType == *componentType && isValidRackSlot(item.rackSlot) &&
+  if (currentRack != nullptr && sameRackType(currentRack->componentType, *componentType) && isValidRackSlot(item.rackSlot) &&
       !slotOccupied(store, item.rackId, item.rackSlot, &item)) return false;
 
   item.rackId.clear();
   item.rackSlot.clear();
   vector<HimsRack*> compatible;
-  for (auto& rack : store.racks()) if (rack.componentType == *componentType) compatible.push_back(&rack);
+  for (auto& rack : store.racks())
+    if (sameRackType(rack.componentType, *componentType)) compatible.push_back(&rack);
   sort(compatible.begin(), compatible.end(), [](const HimsRack* lhs, const HimsRack* rhs) {
     return rackNumber(lhs->code) < rackNumber(rhs->code);
   });

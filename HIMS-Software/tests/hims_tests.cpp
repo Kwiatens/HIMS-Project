@@ -12,6 +12,15 @@
 #include <iostream>
 #include <unordered_map>
 
+#undef assert
+#define assert(expr)                                                                                                 \
+  do {                                                                                                                \
+    if (!(expr)) {                                                                                                    \
+      cerr << "Assertion failed: " << #expr << " at " << __FILE__ << ":" << __LINE__ << '\n';                     \
+      std::exit(1);                                                                                                   \
+    }                                                                                                                 \
+  } while (false)
+
 using namespace hims;
 using namespace std;
 
@@ -287,8 +296,10 @@ int main() {
     powerMosfet.parameters = {{"Package / Case", "TO-263-3, D2PAK"}};
     rackStore.items().push_back(powerMosfet);
     reconcileRackAssignment(rackStore, rackStore.items().back());
-    assert(rackStore.items().back().rackAssignment == RackAssignmentMode::Unassigned);
-    assert(rackLocation(rackStore.items().back(), rackStore.racks()).empty());
+    assert(rackStore.items().back().rackAssignment == RackAssignmentMode::Manual);
+    assert(rackStore.racks().size() == 4);
+    assert(rackStore.racks()[3].componentType == "Transistors");
+    assert(rackLocation(rackStore.items().back(), rackStore.racks()) == "R4-A1");
 
     InventoryItem compactMosfet;
     compactMosfet.id = "rack-compact-mosfet";
@@ -297,7 +308,68 @@ int main() {
     compactMosfet.parameters = {{"Package / Case", "SOT-23"}};
     rackStore.items().push_back(compactMosfet);
     reconcileRackAssignment(rackStore, rackStore.items().back());
-    assert(!rackLocation(rackStore.items().back(), rackStore.racks()).empty());
+    assert(rackLocation(rackStore.items().back(), rackStore.racks()) == "R4-A2");
+
+    {
+      InventoryStore autoStore;
+      InventoryItem buckIc;
+      buckIc.id = "rack-buck-ic";
+      buckIc.partName = "Buck converter";
+      buckIc.category = "Integrated Circuits";
+      buckIc.notes = "Integrated circuit with diode clamp.";
+      buckIc.parameters = {{"Package / Case", "QFN-16"}, {"Function", "DC-DC converter"}};
+      autoStore.items().push_back(buckIc);
+      reconcileRackAssignment(autoStore, autoStore.items().back());
+      assert(autoStore.racks().size() == 1);
+      assert(autoStore.racks()[0].componentType == "Integrated Circuits");
+      assert(rackLocation(autoStore.items().back(), autoStore.racks()) == "R1-A1");
+    }
+
+    {
+      InventoryStore autoStore;
+      InventoryItem fuse;
+      fuse.id = "rack-fuse";
+      fuse.partName = "Resettable fuse";
+      fuse.category = "Fuses";
+      fuse.parameters = {{"Package / Case", "1206"}};
+      autoStore.items().push_back(fuse);
+      reconcileRackAssignment(autoStore, autoStore.items().back());
+      assert(autoStore.racks().size() == 1);
+      assert(autoStore.racks()[0].componentType == "Fuses");
+      assert(rackLocation(autoStore.items().back(), autoStore.racks()) == "R1-A1");
+    }
+
+    {
+      InventoryStore autoStore;
+      InventoryItem connector;
+      connector.id = "rack-connector";
+      connector.partName = "Board connector";
+      connector.category = "Connectors";
+      connector.parameters = {{"Package / Case", "Through Hole"}};
+      autoStore.items().push_back(connector);
+      reconcileRackAssignment(autoStore, autoStore.items().back());
+      assert(autoStore.racks().size() == 1);
+      assert(autoStore.racks()[0].componentType == "Connectors");
+      assert(rackLocation(autoStore.items().back(), autoStore.racks()) == "R1-A1");
+    }
+
+    {
+      InventoryStore legacyStore;
+      HimsRack legacyRack;
+      legacyRack.id = "legacy-rack";
+      legacyRack.code = "R9";
+      legacyRack.componentType = "integrated-circuits";
+      legacyStore.racks().push_back(legacyRack);
+      InventoryItem legacyIc;
+      legacyIc.id = "legacy-ic";
+      legacyIc.partName = "Buck regulator";
+      legacyIc.category = "Integrated Circuits";
+      legacyIc.parameters = {{"Package / Case", "QFN-16"}};
+      legacyStore.items().push_back(legacyIc);
+      reconcileRackAssignment(legacyStore, legacyStore.items().back());
+      assert(legacyStore.racks().size() == 1);
+      assert(rackLocation(legacyStore.items().back(), legacyStore.racks()) == "R9-A1");
+    }
 
     string error;
     auto& manuallyPlaced = rackStore.items()[26];
@@ -449,6 +521,16 @@ int main() {
     auto* backendPtr = backend.get();
     LabelPrinterService service(move(backend));
     service.setConfiguredPrinter("ZDesigner LP 2824 Plus (ZPL)");
+    const auto expectHeader = [&](const InventoryItem& candidate, const string& expected) {
+      const auto plan = service.buildLabelPlan(candidate);
+      if (plan.categoryHeader != expected) {
+        cerr << "Expected header '" << expected << "' but got '" << plan.categoryHeader << "' for "
+             << candidate.id << '\n';
+      }
+      assert(plan.categoryHeader == expected);
+      assert(service.buildZpl(candidate).find("^FD" + expected + "^FS") != string::npos);
+      return plan;
+    };
 
     const auto info = service.configuredPrinterInfo();
     assert(info.has_value());
@@ -497,9 +579,9 @@ int main() {
     const auto rackPlan = service.buildLabelPlan(item, "R3-E3");
     assert(rackPlan.rackLocation == "R3-E3");
     const auto rackZpl = service.buildZpl(item, "R3-E3");
-    assert(rackZpl.find("^FO10,176^A0N,18,18^FDR3-E3^FS") != string::npos);
+    assert(rackZpl.find("^FO10,173^A0N,18,18^FDR3-E3^FS") != string::npos);
     assert(zpl.find("^FDLA,0002^FS") != string::npos);
-    assert(zpl.find("^FO162,155^A0N,13,13^FDHIMS:R-0002^FS") != string::npos);
+    assert(zpl.find("^FO162,173^A0N,13,13^FDHIMS:R-0002^FS") != string::npos);
     assert(zpl.find("^BC") == string::npos);
 
     string error;
@@ -531,8 +613,15 @@ int main() {
     assert(customRackPlan.categoryText == "SMD WIDGETS");
     assert(customRackPlan.rackText == "RACK 12");
     const auto customRackZpl = service.buildRackLabelZpl(customRack);
-    assert(customRackZpl.find("^FDSMD WIDGETS^FS") != string::npos);
+    assert(customRackZpl.find("^FO6,48^A0N,27,24^FB244,2,4,C^FDSMD\\&WIDGETS^FS") != string::npos);
     assert(customRackZpl.find("^GFA") == string::npos);
+
+    HimsRack longRack;
+    longRack.id = "rack-long-1";
+    longRack.code = "R13";
+    longRack.componentType = "integrated circuits";
+    const auto longRackZpl = service.buildRackLabelZpl(longRack);
+    assert(longRackZpl.find("^FDINTEGRATED\\&CIRCUITS^FS") != string::npos);
 
     error.clear();
     assert(service.printRackLabel(resistorRack, &error));
@@ -569,6 +658,143 @@ int main() {
     assert(protectionPlan.categoryHeader == "Protection IC");
     assert(service.buildZpl(protectionIc).find("^FDProtection IC^FS") != string::npos);
 
+    {
+      InventoryItem buckIc;
+      buckIc.id = "buck-ic-1";
+      buckIc.partName = "Synchronous buck converter";
+      buckIc.manufacturer = "Texas Instruments";
+      buckIc.category = "Integrated Circuits";
+      buckIc.notes = "Integrated circuit with diode clamp and switching regulator topology from a wide input rail.";
+      buckIc.parameters = {{"Function", "DC-DC converter"}, {"Topology", "Buck"}, {"Package / Case", "QFN-16"}};
+      const auto buckPlan = expectHeader(buckIc, "Buck Converter");
+      assert(buckPlan.mainValue.find("buck") != string::npos || buckPlan.mainValue.find("converter") != string::npos);
+    }
+
+    {
+      InventoryItem boostIc;
+      boostIc.id = "boost-ic-1";
+      boostIc.partName = "Boost converter";
+      boostIc.manufacturer = "Analog Devices";
+      boostIc.category = "Integrated Circuits";
+      boostIc.parameters = {{"Function", "DC-DC converter"}, {"Topology", "Boost"}, {"Package / Case", "QFN-20"}};
+      expectHeader(boostIc, "Boost Converter");
+    }
+
+    {
+      InventoryItem buckBoostIc;
+      buckBoostIc.id = "buck-boost-ic-1";
+      buckBoostIc.partName = "Buck-boost converter";
+      buckBoostIc.manufacturer = "Texas Instruments";
+      buckBoostIc.category = "Integrated Circuits";
+      buckBoostIc.parameters = {{"Function", "DC-DC converter"}, {"Topology", "Buck-Boost"}, {"Package / Case", "QFN-24"}};
+      expectHeader(buckBoostIc, "Buck-Boost Conv.");
+    }
+
+    {
+      InventoryItem hBridge;
+      hBridge.id = "hbridge-1";
+      hBridge.partName = "H-bridge motor driver";
+      hBridge.manufacturer = "STMicroelectronics";
+      hBridge.category = "Integrated Circuits";
+      hBridge.parameters = {{"Function", "Motor control"}, {"Output Type", "H-Bridge"}};
+      expectHeader(hBridge, "H-Bridge");
+    }
+
+    {
+      InventoryItem motorDriver;
+      motorDriver.id = "motor-driver-1";
+      motorDriver.partName = "Dual motor driver";
+      motorDriver.manufacturer = "Texas Instruments";
+      motorDriver.category = "Integrated Circuits";
+      motorDriver.parameters = {{"Function", "Motor Driver"}, {"Output Type", "Half Bridge"}};
+      expectHeader(motorDriver, "Motor Driver");
+    }
+
+    {
+      InventoryItem voltageRef;
+      voltageRef.id = "ref-1";
+      voltageRef.partName = "Precision voltage reference";
+      voltageRef.manufacturer = "Microchip";
+      voltageRef.category = "Integrated Circuits";
+      voltageRef.parameters = {{"Voltage Reference Type", "Shunt"}, {"Package / Case", "SOT-23"}};
+      expectHeader(voltageRef, "Voltage Ref.");
+    }
+
+    {
+      InventoryItem comparator;
+      comparator.id = "cmp-1";
+      comparator.partName = "Dual comparator";
+      comparator.manufacturer = "onsemi";
+      comparator.category = "Integrated Circuits";
+      comparator.parameters = {{"Function", "Comparator"}, {"Package / Case", "SOIC-8"}};
+      expectHeader(comparator, "Comparator");
+    }
+
+    {
+      InventoryItem logicBuffer;
+      logicBuffer.id = "logic-buffer-1";
+      logicBuffer.partName = "Tri-state buffer";
+      logicBuffer.manufacturer = "Nexperia";
+      logicBuffer.category = "Integrated Circuits";
+      logicBuffer.parameters = {{"Function", "Logic Buffer"}, {"Package / Case", "TSSOP-14"}};
+      expectHeader(logicBuffer, "Logic Buffer");
+    }
+
+    {
+      InventoryItem logicGate;
+      logicGate.id = "logic-gate-1";
+      logicGate.partName = "Quad NAND gate";
+      logicGate.manufacturer = "Texas Instruments";
+      logicGate.category = "Integrated Circuits";
+      logicGate.parameters = {{"Function", "Logic Gate"}, {"Package / Case", "SOIC-14"}};
+      expectHeader(logicGate, "Logic Gate");
+    }
+
+    {
+      InventoryItem tempSensor;
+      tempSensor.id = "temp-sensor-1";
+      tempSensor.partName = "Digital temperature sensor";
+      tempSensor.manufacturer = "Texas Instruments";
+      tempSensor.category = "Sensors";
+      tempSensor.parameters = {{"Sensor Type", "Temperature"}, {"Output", "I2C"}, {"Resolution", "12 bit"}};
+      expectHeader(tempSensor, "Temp Sensor");
+    }
+
+    {
+      InventoryItem precisionTimer;
+      precisionTimer.id = "generic-precision-timer-1";
+      precisionTimer.partName = "Precision timer";
+      precisionTimer.manufacturer = "Timer Devices Inc.";
+      precisionTimer.category = "Clock/Timing - Programmable Timers and Oscillators";
+      precisionTimer.parameters = {{"Type", "555 Type, Timer/Oscillator (Single)"},
+                                   {"Frequency", "100kHz"},
+                                   {"DigiKey Programmable", "Not Verified"},
+                                   {"Package / Case", "8-DIP"}};
+      expectHeader(precisionTimer, "Timer IC");
+    }
+
+    {
+      InventoryItem hostileTimer;
+      hostileTimer.id = "timer-hostile-memory-category";
+      hostileTimer.partName = "Analog timing controller";
+      hostileTimer.manufacturer = "Timer Devices Inc.";
+      hostileTimer.category = "Memory";
+      hostileTimer.notes = "Timer/Oscillator IC imported with an incorrect broad category.";
+      hostileTimer.parameters = {{"Type", "Programmable Timer"}, {"Package / Case", "SOIC-8"}};
+      const auto hostileTimerPlan = expectHeader(hostileTimer, "Timer IC");
+      assert(hostileTimerPlan.categoryHeader != "Memory IC");
+    }
+
+    {
+      InventoryItem oneShotTimer;
+      oneShotTimer.id = "one-shot-timer-1";
+      oneShotTimer.partName = "Monostable multivibrator";
+      oneShotTimer.manufacturer = "Timer Devices Inc.";
+      oneShotTimer.category = "Integrated Circuits";
+      oneShotTimer.parameters = {{"Function", "One-Shot Timer"}, {"Package / Case", "SOIC-14"}};
+      expectHeader(oneShotTimer, "Timer IC");
+    }
+
     InventoryItem opAmp;
     opAmp.id = "opamp-1";
     opAmp.partName = "Dual op amp";
@@ -594,6 +820,33 @@ int main() {
     assert(imuPlan.parameterLine2.find("Out") != string::npos);
     assert(imuPlan.parameterLine3.find("Vdd") != string::npos || imuPlan.parameterLine3.find("Res") != string::npos);
     assert(service.buildZpl(imu).find("^FD3 Axis IMU^FS") != string::npos);
+
+    {
+      InventoryItem buckFalsePositive;
+      buckFalsePositive.id = "buck-false-positive-1";
+      buckFalsePositive.partName = "Buck converter";
+      buckFalsePositive.manufacturer = "Texas Instruments";
+      buckFalsePositive.category = "Integrated Circuits";
+      buckFalsePositive.notes = "Integrated circuit with diode clamp and rectifier-style flyback protection.";
+      buckFalsePositive.parameters = {{"Function", "DC-DC converter"}, {"Topology", "Buck"}, {"Package / Case", "QFN-16"}};
+      const auto falsePositivePlan = expectHeader(buckFalsePositive, "Buck Converter");
+      assert(service.buildZpl(buckFalsePositive).find("Rectifier Diode") == string::npos);
+      assert(service.buildZpl(buckFalsePositive).find("^FDBuck Converter^FS") != string::npos);
+      assert(falsePositivePlan.packageLine.find("QFN-16") != string::npos);
+    }
+
+    {
+      InventoryItem genericIc;
+      genericIc.id = "generic-ic-from-text";
+      genericIc.partName = "Configurable analog controller";
+      genericIc.manufacturer = "Acme";
+      genericIc.category = "Integrated Circuits";
+      genericIc.notes = "Operates from a single supply.";
+      genericIc.parameters = {{"Function", "Controller"}, {"Package / Case", "SOIC-8"}};
+      const auto genericPlan = service.buildLabelPlan(genericIc);
+      assert(genericPlan.categoryHeader == "Integrated Circuit");
+      assert(genericPlan.categoryHeader != "Memory IC");
+    }
 
     InventoryItem fallback;
     fallback.id = "misc-1";
@@ -804,17 +1057,6 @@ int main() {
     assert(loaded.fallbackPort == expected.fallbackPort);
     filesystem::remove(configPath);
     assert(generateHimsScanToken().size() == 64);
-  }
-
-  {
-    const char* profile = getenv("USERPROFILE");
-    if (profile != nullptr && *profile != '\0') {
-      const auto dbPath = filesystem::path(profile) / "Documents" / "HIMS" / "inventory.db";
-      if (filesystem::exists(dbPath)) {
-        InventoryStore store;
-        store.load(dbPath);
-      }
-    }
   }
 
   {

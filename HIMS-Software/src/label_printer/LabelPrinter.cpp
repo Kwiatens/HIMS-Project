@@ -562,6 +562,43 @@ bool itemTextContains(const InventoryItem& item, initializer_list<const char*> n
   return false;
 }
 
+vector<string> itemTextTokens(const InventoryItem& item) {
+  string text = item.category + " " + displayCategory(item.category) + " " + item.partName + " " +
+                item.manufacturer + " " + item.location + " " + item.notes + " " + item.digikeyPartNumber +
+                " " + item.sku;
+  for (const auto& tag : item.tags) text += " " + tag;
+  for (const auto& parameter : item.parameters) text += " " + parameter.name + " " + parameter.value;
+
+  vector<string> tokens;
+  string current;
+  for (unsigned char ch : text) {
+    if (isalnum(ch)) {
+      current.push_back(static_cast<char>(tolower(ch)));
+    } else if (!current.empty()) {
+      tokens.push_back(current);
+      current.clear();
+    }
+  }
+  if (!current.empty()) {
+    tokens.push_back(current);
+  }
+  return tokens;
+}
+
+bool itemTextHasToken(const InventoryItem& item, initializer_list<const char*> tokens) {
+  const auto haystack = itemTextTokens(item);
+  for (const auto* token : tokens) {
+    const auto normalized = normalizeKey(token);
+    if (normalized.empty()) {
+      continue;
+    }
+    if (find(haystack.begin(), haystack.end(), normalized) != haystack.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool hasParameter(const InventoryItem& item, initializer_list<const char*> names) {
   return findParameter(item.parameters, names) != nullptr;
 }
@@ -571,7 +608,8 @@ string sensorContextHeader(const InventoryItem& item) {
       (itemTextContains(item, {"accelerometer"}) && itemTextContains(item, {"gyroscope", "gyro"}))) {
     return "3 Axis IMU";
   }
-  if (itemTextContains(item, {"temperature", "temp"})) {
+  if (itemTextContains(item, {"temperature sensor", "temp sensor", "thermometer", "thermocouple"}) ||
+      (itemTextContains(item, {"temperature"}) && !itemTextContains(item, {"coefficient"}))) {
     return "Temp Sensor";
   }
   if (itemTextContains(item, {"pressure"})) {
@@ -579,6 +617,9 @@ string sensorContextHeader(const InventoryItem& item) {
   }
   if (itemTextContains(item, {"humidity"})) {
     return "Humidity Sensor";
+  }
+  if (itemTextContains(item, {"current sensor", "current sensing", "current monitor"})) {
+    return "Current Sensor";
   }
   if (itemTextContains(item, {"accelerometer", "accel"})) {
     return "Accelerometer";
@@ -588,6 +629,21 @@ string sensorContextHeader(const InventoryItem& item) {
   }
   if (itemTextContains(item, {"magnetometer"})) {
     return "Magnetometer";
+  }
+  if (itemTextContains(item, {"hall effect", "hall sensor"})) {
+    return "Hall Sensor";
+  }
+  if (itemTextContains(item, {"proximity", "distance", "time of flight", "tof", "gesture"})) {
+    return "Proximity Sensor";
+  }
+  if (itemTextContains(item, {"ambient light", "light sensor", "color sensor", "optical"})) {
+    return "Light Sensor";
+  }
+  if (itemTextContains(item, {"gas sensor", "air quality", "voc", "co2", "air quality sensor"})) {
+    return "Gas Sensor";
+  }
+  if (itemTextContains(item, {"touch sensor", "capacitive touch"})) {
+    return "Touch Sensor";
   }
   return {};
 }
@@ -645,40 +701,251 @@ string diodeMainLabelValue(const InventoryItem& item) {
   return partName;
 }
 
-string integratedCircuitContextHeader(const InventoryItem& item) {
-  if (itemTextContains(item, {"op amp", "operational amplifier", "operational amp"}) ||
-      itemTextContains(item, {"gain bandwidth", "slew rate", "input offset voltage", "rail-to-rail",
+bool isIcLikeItem(const InventoryItem& item) {
+  if (categoryContains(item, {"integrated circuit", "integrated circuits", "mcu", "microcontroller", "memory",
+                              "logic", "amplifier", "comparator", "reference", "regulator", "power management",
+                              "pmic", "sensor", "interface", "transceiver", "oscillator", "clock", "timer",
+                              "converter", "data acquisition", "charger", "supervisor", "protection", "driver",
+                              "codec", "audio", "power path", "load switch", "gate driver",
+                              "motor driver", "h-bridge"})) {
+    return true;
+  }
+
+  return itemTextContains(item, {"integrated circuit", "integrated circuits", "microcontroller", "microprocessor",
+                                 "power management ic", "pmic", "buck converter", "boost converter",
+                                 "buck-boost", "buck boost", "dc-dc converter", "switching regulator",
+                                 "low dropout", "ldo", "voltage regulator", "op amp", "op-amp",
+                                 "operational amplifier", "instrumentation amplifier", "comparator",
+                                 "voltage reference", "logic buffer", "logic gate", "logic inverter",
+                                 "flip-flop", "flip flop", "latch", "mux", "demux", "multiplexer",
+                                 "demultiplexer", "transceiver", "level shifter", "voltage translator",
+                                 "motor driver", "gate driver", "h-bridge", "battery charger", "load switch",
+                                 "voltage supervisor", "reset ic", "watchdog", "temperature sensor",
+                                 "pressure sensor", "humidity sensor", "accelerometer", "gyroscope",
+                                 "magnetometer", "adc", "dac", "data converter", "clock generator",
+                                 "oscillator", "rtc", "memory", "flash", "eeprom", "sram"});
+}
+
+string powerIcContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"buck-boost", "buck boost"})) {
+    return "Buck-Boost Conv.";
+  }
+  if (itemTextContains(item, {"buck converter", "buck regulator", "step-down", "step down", "synchronous buck"})) {
+    return "Buck Converter";
+  }
+  if (itemTextContains(item, {"boost converter", "boost regulator", "step-up", "step up"})) {
+    return "Boost Converter";
+  }
+  if (itemTextContains(item, {"battery charger", "charger"})) {
+    return "Battery Charger";
+  }
+  if (itemTextContains(item, {"load switch", "power distribution switch", "hot swap", "efuse", "e-fuse"})) {
+    return "Load Switch";
+  }
+  if (itemTextContains(item, {"voltage supervisor", "supervisor", "reset ic", "power-on reset", "brownout",
+                              "voltage detector", "watchdog"})) {
+    return "Voltage Supervisor";
+  }
+  if (itemTextContains(item, {"protection ic", "protection array", "esd protection", "surge protection",
+                              "overvoltage protection", "reverse polarity", "current limit", "power path"})) {
+    return "Protection IC";
+  }
+  if (itemTextContains(item, {"low dropout", "ldo", "linear regulator", "voltage regulator", "regulator"})) {
+    return "Regulator";
+  }
+  if (itemTextContains(item, {"dc-dc", "dc dc", "switching regulator", "power management", "pmic"})) {
+    return "Power IC";
+  }
+  return {};
+}
+
+string analogIcContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"op amp", "op-amp", "operational amplifier", "operational amp",
+                              "gain bandwidth", "slew rate", "input offset voltage", "rail-to-rail",
                               "common-mode rejection"})) {
     return "OP-AMP";
   }
-  if (itemTextContains(item, {"comparator"})) {
+  if (itemTextContains(item, {"comparator", "window comparator"})) {
     return "Comparator";
   }
-  if (itemTextContains(item, {"protection ic", "protection array", "esd protection", "surge protection",
-                              "overvoltage protection"}) ||
-      itemTextContains(item, {"protection"}) && itemTextContains(item, {"ic", "integrated circuit"})) {
-    return "Protection IC";
+  if (itemTextContains(item, {"voltage reference", "reference voltage", "bandgap reference", "shunt reference",
+                              "reference ic"})) {
+    return "Voltage Ref.";
   }
-  if (itemTextContains(item, {"memory", "flash", "eeprom", "sram", "rom"}) ||
-      hasParameter(item, {"Memory Type", "Memory Format", "Memory Size", "Program Memory Size",
-                          "Program Memory Type"})) {
-    return "Memory IC";
+  if (itemTextContains(item, {"instrumentation amplifier", "current sense amplifier", "amplifier"})) {
+    return "Amplifier";
   }
-  if (itemTextContains(item, {"regulator", "voltage regulator", "power management", "buck", "boost",
-                              "low dropout", "ldo", "dc-dc", "step-down", "step-up"})) {
-    return "Regulator";
+  return {};
+}
+
+string sensorIcContextHeader(const InventoryItem& item) {
+  const auto sensor = sensorContextHeader(item);
+  if (!sensor.empty()) {
+    return sensor;
   }
-  if (itemTextContains(item, {"sensor", "imu", "accelerometer", "gyroscope", "gyro"})) {
-    const auto sensor = sensorContextHeader(item);
-    if (!sensor.empty()) {
-      return sensor;
-    }
-    return "Sensor IC";
+  return "Sensor IC";
+}
+
+string dataConverterContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"analog to digital", "analog-to-digital", "adc"})) {
+    return "ADC";
   }
-  if (itemTextContains(item, {"driver", "transceiver", "interface"})) {
+  if (itemTextContains(item, {"digital to analog", "digital-to-analog", "dac"})) {
+    return "DAC";
+  }
+  if (itemTextContains(item, {"data converter", "data acquisition"})) {
+    return "Data Conv.";
+  }
+  return {};
+}
+
+string timingIcContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"rtc", "real time clock", "real-time clock"})) {
+    return "RTC";
+  }
+  if (itemTextContains(item, {"clock generator", "clock synthesizer", "frequency synthesizer", "pll"})) {
+    return "Clock Gen.";
+  }
+  if (categoryContains(item, {"timer", "timers", "programmable timers"}) ||
+      itemTextContains(item, {"555 type", "timer/oscillator", "timer oscillator", "timers and oscillators",
+                              "programmable timer", "delay timer", "watchdog timer", "timer ic",
+                              "monostable", "astable", "multivibrator", "one-shot", "one shot",
+                              "interval timer", "pulse timer"}) ||
+      itemTextHasToken(item, {"timer", "timers", "counter", "counters"})) {
+    return "Timer IC";
+  }
+  if (itemTextContains(item, {"oscillator", "osc"})) {
+    return "Oscillator";
+  }
+  return {};
+}
+
+string driverIcContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"h-bridge", "h bridge"})) {
+    return "H-Bridge";
+  }
+  if (itemTextContains(item, {"motor driver", "stepper driver", "servo driver"})) {
+    return "Motor Driver";
+  }
+  if (itemTextContains(item, {"gate driver", "mosfet driver", "high side driver", "low side driver"})) {
+    return "Gate Driver";
+  }
+  if (itemTextContains(item, {"led driver", "display driver", "line driver"})) {
+    return "Driver IC";
+  }
+  if (itemTextContains(item, {"driver"})) {
+    return "Driver IC";
+  }
+  return {};
+}
+
+string logicIcContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"transceiver", "bus transceiver"})) {
+    return "Transceiver";
+  }
+  if (itemTextContains(item, {"level shifter", "logic translator", "voltage translator"})) {
+    return "Level Shifter";
+  }
+  if (itemTextContains(item, {"multiplexer", "demultiplexer", "mux", "demux"})) {
+    return "Mux/Demux";
+  }
+  if (itemTextContains(item, {"flip-flop", "flip flop"})) {
+    return "Flip-Flop";
+  }
+  if (itemTextContains(item, {"latch"})) {
+    return "Latch";
+  }
+  if (itemTextContains(item, {"inverter", "not gate"})) {
+    return "Inverter";
+  }
+  if (itemTextContains(item, {"logic gate", "and gate", "or gate", "nand", "nor", "xor", "xnor"})) {
+    return "Logic Gate";
+  }
+  if (itemTextContains(item, {"logic buffer", "bus buffer", "buffer"})) {
+    return "Logic Buffer";
+  }
+  if (itemTextContains(item, {"logic"})) {
+    return "Logic IC";
+  }
+  if (itemTextContains(item, {"interface", "phy", "usb", "can", "rs-485", "ethernet", "spi", "i2c", "uart"})) {
     return "Interface IC";
   }
   return {};
+}
+
+string memoryIcContextHeader(const InventoryItem& item) {
+  if (categoryContains(item, {"memory"}) ||
+      hasParameter(item, {"Memory Type", "Memory Format", "Memory Size", "Program Memory Size",
+                          "Program Memory Type", "Memory Interface"})) {
+    return "Memory IC";
+  }
+  if (itemTextContains(item, {"memory", "flash memory", "eeprom", "sram", "dram", "fram", "non-volatile memory",
+                              "volatile memory"})) {
+    return "Memory IC";
+  }
+  return {};
+}
+
+string integratedCircuitContextHeader(const InventoryItem& item) {
+  if (itemTextContains(item, {"microcontroller", "mcu", "microprocessor", "processor"})) {
+    return "MCU";
+  }
+  if (const auto power = powerIcContextHeader(item); !power.empty()) {
+    return power;
+  }
+  if (const auto dataConverter = dataConverterContextHeader(item); !dataConverter.empty()) {
+    return dataConverter;
+  }
+  if (const auto sensor = sensorIcContextHeader(item); !sensor.empty() && sensor != "Sensor IC") {
+    return sensor;
+  }
+  if (const auto timing = timingIcContextHeader(item); !timing.empty()) {
+    return timing;
+  }
+  if (const auto memory = memoryIcContextHeader(item); !memory.empty()) {
+    return memory;
+  }
+  if (const auto analog = analogIcContextHeader(item); !analog.empty()) {
+    return analog;
+  }
+  if (const auto driver = driverIcContextHeader(item); !driver.empty()) {
+    return driver;
+  }
+  if (const auto logic = logicIcContextHeader(item); !logic.empty()) {
+    return logic;
+  }
+  if (itemTextContains(item, {"sensor", "imu", "accelerometer", "gyroscope", "gyro", "magnetometer",
+                              "temperature", "humidity", "pressure", "current sensor"})) {
+    return sensorIcContextHeader(item);
+  }
+  if (itemTextContains(item, {"transceiver", "interface"})) {
+    return "Interface IC";
+  }
+  if (itemTextContains(item, {"power management", "pmic"})) {
+    return "Power IC";
+  }
+  if (categoryContains(item, {"integrated circuit", "integrated circuits"})) {
+    return "Integrated Circuit";
+  }
+  if (categoryContains(item, {"power management", "regulator", "charger"})) {
+    return "Power IC";
+  }
+  if (categoryContains(item, {"logic"})) {
+    return "Logic IC";
+  }
+  if (categoryContains(item, {"amplifier", "comparator", "reference"})) {
+    return "Analog IC";
+  }
+  if (categoryContains(item, {"sensor"})) {
+    return "Sensor IC";
+  }
+  if (categoryContains(item, {"timing", "clock", "oscillator", "rtc"})) {
+    return "Timing IC";
+  }
+  if (categoryContains(item, {"memory"})) {
+    return "Memory IC";
+  }
+  return "Integrated Circuit";
 }
 
 string transistorContextHeader(const InventoryItem& item) {
@@ -1073,6 +1340,46 @@ string rackLabelText(const string& code) {
   return cleaned.empty() ? "RACK" : fieldOrBlank("RACK " + cleaned, 12);
 }
 
+vector<string> rackCategoryLines(const string& category) {
+  vector<string> words;
+  istringstream input(trim(category));
+  string word;
+  while (input >> word) {
+    words.push_back(word);
+  }
+
+  if (words.size() <= 1) {
+    return {fieldOrBlank(category, 20)};
+  }
+
+  if (words.size() == 2) {
+    return {fieldOrBlank(words[0], 14), fieldOrBlank(words[1], 14)};
+  }
+
+  const size_t splitAt = (words.size() + 1) / 2;
+  vector<string> firstWords(words.begin(), words.begin() + splitAt);
+  vector<string> secondWords(words.begin() + splitAt, words.end());
+  vector<string> lines = {join(firstWords, ' '), join(secondWords, ' ')};
+  for (auto& line : lines) {
+    line = fieldOrBlank(line, 14);
+  }
+  return lines;
+}
+
+string rackCategoryFieldData(const vector<string>& lines) {
+  if (lines.empty()) {
+    return "RACK";
+  }
+  string output;
+  for (const auto& line : lines) {
+    if (!output.empty()) {
+      output += "\\&";
+    }
+    output += sanitizeLabelText(line);
+  }
+  return output;
+}
+
 string makeRackJobName(const HimsRack& rack) {
   const auto code = trim(rack.code);
   return code.empty() ? "HIMS Rack" : "HIMS Rack " + code;
@@ -1294,9 +1601,6 @@ string partContextHeader(const InventoryItem& item) {
   if (categoryContains(item, {"inductor", "choke", "coil"})) {
     return "Inductor";
   }
-  if (categoryContains(item, {"crystal", "oscillator", "resonator"})) {
-    return "Crystal";
-  }
   if (categoryContains(item, {"mcu", "microcontroller"})) {
     return "MCU";
   }
@@ -1306,6 +1610,15 @@ string partContextHeader(const InventoryItem& item) {
       return sensor;
     }
     return "Sensor";
+  }
+  if (isIcLikeItem(item)) {
+    const auto icContext = integratedCircuitContextHeader(item);
+    if (!icContext.empty()) {
+      return icContext;
+    }
+  }
+  if (categoryContains(item, {"crystal", "oscillator", "resonator"})) {
+    return "Crystal";
   }
   if (categoryContains(item, {"regulator", "voltage regulator", "power management"})) {
     return "Regulator";
@@ -1317,12 +1630,6 @@ string partContextHeader(const InventoryItem& item) {
   if (categoryContains(item, {"transistor", "mosfet", "fet", "discrete semiconductor"}) ||
       itemTextContains(item, {"transistor", "mosfet", "fet", "bjt"})) {
     return transistorContextHeader(item);
-  }
-  if (categoryContains(item, {"integrated circuit", "integrated circuits"})) {
-    const auto icContext = integratedCircuitContextHeader(item);
-    if (!icContext.empty()) {
-      return icContext;
-    }
   }
   return fallbackContextHeader(item);
 }
@@ -1539,6 +1846,7 @@ HimsRackLabelPlan LabelPrinterService::buildRackLabelPlan(const HimsRack& rack) 
 
 string LabelPrinterService::buildRackLabelZpl(const HimsRack& rack) const {
   const auto plan = buildRackLabelPlan(rack);
+  const auto categoryLines = rackCategoryLines(plan.categoryText);
   ostringstream out;
   out << "^XA\r\n";
   out << "^CI28\r\n";
@@ -1555,7 +1863,11 @@ string LabelPrinterService::buildRackLabelZpl(const HimsRack& rack) const {
   out << "\r\n";
 
   out << "^FX --- Main category text ---\r\n";
-  out << "^FO6,55^A0N,40,34^FB244,1,0,C^FD" << sanitizeLabelText(plan.categoryText) << "^FS\r\n";
+  if (categoryLines.size() <= 1) {
+    out << "^FO6,55^A0N,40,34^FB244,1,0,C^FD" << rackCategoryFieldData(categoryLines) << "^FS\r\n";
+  } else {
+    out << "^FO6,48^A0N,27,24^FB244,2,4,C^FD" << rackCategoryFieldData(categoryLines) << "^FS\r\n";
+  }
   out << "\r\n";
 
   out << "^FX --- Thin separator under category ---\r\n";
