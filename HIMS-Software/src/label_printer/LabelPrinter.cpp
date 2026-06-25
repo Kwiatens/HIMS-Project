@@ -608,6 +608,43 @@ string diodeContextHeader(const InventoryItem& item) {
   return "Diode";
 }
 
+bool startsWithInsensitive(const string& value, const string& prefix) {
+  if (value.size() < prefix.size()) {
+    return false;
+  }
+  return lowerAscii(value.substr(0, prefix.size())) == lowerAscii(prefix);
+}
+
+string diodeMainLabelValue(const InventoryItem& item) {
+  const auto partName = trim(item.partName);
+  const auto sku = trim(item.sku);
+
+  if (partName.empty()) {
+    if (!sku.empty()) {
+      return sku;
+    }
+    return item.category;
+  }
+
+  const auto cleaned = [&](const string& prefix) -> string {
+    if (!startsWithInsensitive(partName, prefix)) {
+      return {};
+    }
+    const auto stripped = trim(partName.substr(prefix.size()));
+    return stripped;
+  };
+
+  if (const auto stripped = cleaned("tvs diode "); !stripped.empty()) return stripped;
+  if (const auto stripped = cleaned("diode tvs "); !stripped.empty()) return stripped;
+  if (const auto stripped = cleaned("transient voltage suppressor diode "); !stripped.empty()) return stripped;
+  if (const auto stripped = cleaned("schottky diode "); !stripped.empty()) return stripped;
+  if (const auto stripped = cleaned("rectifier diode "); !stripped.empty()) return stripped;
+  if (const auto stripped = cleaned("zener diode "); !stripped.empty()) return stripped;
+  if (const auto stripped = cleaned("diode "); !stripped.empty()) return stripped;
+
+  return partName;
+}
+
 string integratedCircuitContextHeader(const InventoryItem& item) {
   if (itemTextContains(item, {"op amp", "operational amplifier", "operational amp"}) ||
       itemTextContains(item, {"gain bandwidth", "slew rate", "input offset voltage", "rail-to-rail",
@@ -683,6 +720,11 @@ string mainLabelValue(const InventoryItem& item) {
     return collectLineFromValues({firstInductanceParameter(item).value_or({}),
                                   firstParameter(item, {"Current Rating", "Current"}).value_or({})},
                                  " ", 24);
+  }
+
+  if (categoryContains(item, {"diode", "rectifier", "schottky", "transient voltage suppressor"}) ||
+      itemTextContains(item, {"diode", "rectifier", "schottky", "zener"})) {
+    return diodeMainLabelValue(item);
   }
 
   if (!trim(item.partName).empty()) {
@@ -1454,11 +1496,11 @@ string LabelPrinterService::buildZpl(const InventoryItem& item, string rackLocat
 
   out << "^FX --- QR code ---\r\n";
   // Keep the QR symbol compact so it wraps less on curved labels.
-  out << "^FO170,90^BQN,2,3^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
+  out << "^FO170,60^BQN,2,3^FDLA," << sanitizeLabelText(barcodeHint) << "^FS\r\n";
   out << "\r\n";
 
   out << "^FX --- Human readable HIMS ID ---\r\n";
-  out << "^FO162,165^A0N,13,13^FD" << sanitizeLabelText(scannerHint) << "^FS\r\n";
+  out << "^FO162,173^A0N,13,13^FD" << sanitizeLabelText(scannerHint) << "^FS\r\n";
 
   if (!rackHint.empty()) {
     out << "^FX --- HIMS rack location ---\r\n";

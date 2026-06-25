@@ -11,6 +11,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -174,6 +175,44 @@ void setConsoleTitle(const string& title) {
 bool openUrl(const string& url) {
   const auto result = reinterpret_cast<intptr_t>(ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
   return result > 32;
+}
+
+bool copyToClipboard(const string& text) {
+  if (!OpenClipboard(nullptr)) {
+    return false;
+  }
+
+  struct ClipboardGuard {
+    ~ClipboardGuard() {
+      CloseClipboard();
+    }
+  } guard;
+
+  if (!EmptyClipboard()) {
+    return false;
+  }
+
+  const size_t byteCount = (text.size() + 1) * sizeof(char);
+  HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, byteCount);
+  if (handle == nullptr) {
+    return false;
+  }
+
+  auto* buffer = static_cast<char*>(GlobalLock(handle));
+  if (buffer == nullptr) {
+    GlobalFree(handle);
+    return false;
+  }
+
+  memcpy(buffer, text.c_str(), byteCount);
+  GlobalUnlock(handle);
+
+  if (SetClipboardData(CF_TEXT, handle) == nullptr) {
+    GlobalFree(handle);
+    return false;
+  }
+
+  return true;
 }
 
 bool openCsvFileDialog(filesystem::path& selectedPath) {

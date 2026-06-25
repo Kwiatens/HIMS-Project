@@ -60,6 +60,22 @@ bool App::clearHimsScanPairing() {
   return true;
 }
 
+bool App::copyHimsScanToken() {
+  const auto token = trim(himsScanConfig_.token);
+  if (token.empty()) {
+    setMessage("No pairing token to copy", 2);
+    return false;
+  }
+
+  if (!copyToClipboard(token)) {
+    setMessage("Unable to copy the pairing token", 3);
+    return false;
+  }
+
+  setMessage("Copied the pairing token to the clipboard", 3);
+  return true;
+}
+
 void App::openHimsScanSetup() {
   page_ = Page::HimsScanSetup;
   inputMode_ = InputMode::None;
@@ -89,6 +105,7 @@ ftxui::Element App::renderHimsScanSetupUi() const {
   leftRows.push_back(fullLine("Pairing token", uiAccentColor(), uiPanelLeftBg()));
   leftRows.push_back(fullLine(himsScanConfig_.token.empty() ? string("n/a") : himsScanConfig_.token,
                               uiTitleColor(), uiPanelLeftBg()));
+  leftRows.push_back(fullLine("[t] Copy token to clipboard", uiLinkColor(), uiPanelLeftBg()));
 
   ftxui::Elements rightRows;
   rightRows.push_back(fullLine("Device status", uiAccentColor(), uiPanelRightBg()));
@@ -106,6 +123,7 @@ ftxui::Element App::renderHimsScanSetupUi() const {
   rightRows.push_back(fullLine("A or B still add or subtract quantities", uiTitleColor(), uiPanelRightBg()));
   rightRows.push_back(ftxui::separator());
   rightRows.push_back(fullLine("Actions", uiAccentColor(), uiPanelRightBg()));
+  rightRows.push_back(fullLine("'t' copy token to clipboard", uiTitleColor(), uiPanelRightBg()));
   rightRows.push_back(fullLine("'r' regenerate token", uiTitleColor(), uiPanelRightBg()));
   rightRows.push_back(fullLine("'c' clear paired device", uiTitleColor(), uiPanelRightBg()));
   rightRows.push_back(fullLine("'o' open browser scanner fallback", uiTitleColor(), uiPanelRightBg()));
@@ -155,6 +173,10 @@ void App::handleHimsScanSetupKey(const KeyEvent& key) {
     const auto ch = static_cast<char>(tolower(static_cast<unsigned char>(key.ch)));
     if (ch == 'r') {
       regenerateHimsScanToken();
+      return;
+    }
+    if (ch == 't') {
+      copyHimsScanToken();
       return;
     }
     if (ch == 'c') {

@@ -90,23 +90,29 @@ bool App::printSelectedLabel() {
     return false;
   }
 
+  return printLabelForItem(*item, "Printed label for ", true);
+}
+
+bool App::printLabelForItem(const InventoryItem& item, const string& successPrefix, bool openSetupOnMissingPrinter) {
   if (!printerService_.hasConfiguredPrinter()) {
     setMessage("No printer configured", 3);
-    openPrinterSetup();
+    if (openSetupOnMissingPrinter) {
+      openPrinterSetup();
+    }
     return false;
   }
 
   string error;
-  if (!printerService_.printItemLabel(*item, &error, rackLocation(*item, store_.racks()))) {
+  if (!printerService_.printItemLabel(item, &error, rackLocation(item, store_.racks()))) {
     setMessage("Print failed: " + error, 4);
     refreshPrinterState();
     return false;
   }
 
-  logActivity("print", item->partName + " label printed");
+  logActivity("print", item.partName + " label printed");
   saveState();
   refreshPrinterState();
-  setMessage("Printed label for " + item->partName, 2);
+  setMessage(successPrefix + item.partName, 2);
   return true;
 }
 

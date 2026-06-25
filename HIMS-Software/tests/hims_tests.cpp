@@ -267,6 +267,17 @@ int main() {
     module.parameters = {{"Package", "Module"}};
     rackStore.items().push_back(module);
     reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(rackStore.items().back().rackAssignment == RackAssignmentMode::Unassigned);
+    assert(rackLocation(rackStore.items().back(), rackStore.racks()).empty());
+
+    InventoryItem radialCapacitor;
+    radialCapacitor.id = "rack-radial-capacitor";
+    radialCapacitor.partName = "Aluminum electrolytic capacitor";
+    radialCapacitor.category = "Capacitors";
+    radialCapacitor.parameters = {{"Package / Case", "Radial, Can"}, {"Mounting Type", "Through Hole"}};
+    rackStore.items().push_back(radialCapacitor);
+    reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(rackStore.items().back().rackAssignment == RackAssignmentMode::Unassigned);
     assert(rackLocation(rackStore.items().back(), rackStore.racks()).empty());
 
     InventoryItem powerMosfet;
@@ -276,6 +287,7 @@ int main() {
     powerMosfet.parameters = {{"Package / Case", "TO-263-3, D2PAK"}};
     rackStore.items().push_back(powerMosfet);
     reconcileRackAssignment(rackStore, rackStore.items().back());
+    assert(rackStore.items().back().rackAssignment == RackAssignmentMode::Unassigned);
     assert(rackLocation(rackStore.items().back(), rackStore.racks()).empty());
 
     InventoryItem compactMosfet;

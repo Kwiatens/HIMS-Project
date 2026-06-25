@@ -642,6 +642,46 @@ optional<string> readFirstMember(const JsonPtr& root, initializer_list<const cha
   return nullopt;
 }
 
+optional<string> categoryNameFromNode(const JsonPtr& node) {
+  if (node == nullptr) {
+    return nullopt;
+  }
+  if (const auto name = readFirstMember(node, {"Name", "CategoryName"}); name.has_value()) {
+    return name;
+  }
+  if (const auto* children = asArray(findMember(node, "Children") == nullptr ? nullptr : *findMember(node, "Children"));
+      children != nullptr && !children->empty()) {
+    return categoryNameFromNode(children->back());
+  }
+  return nullopt;
+}
+
+optional<string> extractCategoryName(const JsonPtr& product) {
+  for (const auto* key : {"Category", "ProductCategory"}) {
+    if (const auto* node = findMember(product, key); node != nullptr) {
+      if (const auto category = categoryNameFromNode(*node); category.has_value()) {
+        return category;
+      }
+    }
+  }
+
+  if (const auto* taxonomy = asArray(findMember(product, "LimitedTaxonomy") == nullptr
+                                        ? nullptr
+                                        : *findMember(product, "LimitedTaxonomy"));
+      taxonomy != nullptr && !taxonomy->empty()) {
+    return categoryNameFromNode(taxonomy->back());
+  }
+
+  if (const auto* classifications = asArray(findMember(product, "Classifications") == nullptr
+                                               ? nullptr
+                                               : *findMember(product, "Classifications"));
+      classifications != nullptr && !classifications->empty()) {
+    return categoryNameFromNode(classifications->back());
+  }
+
+  return nullopt;
+}
+
 string normalizeParameterKey(const string& value) {
   string normalized;
   normalized.reserve(value.size());
@@ -1098,6 +1138,9 @@ DigiKeyProductDetails parseProductDetails(const string& lookupKey, const JsonPtr
 
   details.manufacturerName = readPath(productNode, {"Manufacturer", "Name"}).value_or("");
   details.manufacturerPartNumber = readPath(productNode, {"ManufacturerProductNumber"}).value_or("");
+  if (const auto category = extractCategoryName(productNode); category.has_value()) {
+    details.categoryName = *category;
+  }
   details.productDescription = readPath(productNode, {"Description", "ProductDescription"}).value_or("");
   details.detailedDescription = readPath(productNode, {"Description", "DetailedDescription"}).value_or("");
   details.productUrl = readPath(productNode, {"ProductUrl"}).value_or("");

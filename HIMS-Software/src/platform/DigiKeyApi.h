@@ -32,6 +32,7 @@ struct DigiKeyProductDetails {
   string lookupKey;
   string manufacturerName;
   string manufacturerPartNumber;
+  string categoryName;
   string productDescription;
   string detailedDescription;
   string productUrl;

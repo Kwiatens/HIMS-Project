@@ -137,6 +137,12 @@ ftxui::Element App::renderUi() const {
                                                                                               : uiWarnColor()),
                                    ftxui::Color::RGB(82, 50, 18), ftxui::Color::RGB(28, 78, 42),
                                    ftxui::Color::RGB(44, 26, 20)),
+                     ftxui::separator(),
+                     statusCueChip(autoPrintScannedLabels_ ? "Auto Label ON" : "Auto Label OFF",
+                                   autoPrintScannedLabels_, false,
+                                   autoPrintScannedLabels_ ? uiSuccessColor() : uiWarnColor(),
+                                   ftxui::Color::RGB(26, 58, 34), ftxui::Color::RGB(28, 78, 42),
+                                   ftxui::Color::RGB(58, 36, 20)),
                  }) |
                  ftxui::bgcolor(uiPanelLeftBg()));
   body.push_back(ftxui::separator());
@@ -336,6 +342,11 @@ void App::handleKey(const KeyEvent& key) {
       return;
     case InputMode::None:
       break;
+  }
+
+  if (key.type == KeyType::Character && key.ch == 'P' && page_ != Page::RackManagement) {
+    toggleAutoPrintScannedLabels();
+    return;
   }
 
   switch (page_) {

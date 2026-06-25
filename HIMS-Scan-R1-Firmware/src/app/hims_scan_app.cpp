@@ -103,6 +103,25 @@ String findSuppressedSeparatorDigikeyPart(const String& value) {
   return value.substring(partStart, partEnd);
 }
 
+String findSuppressedQuantityField(const String& value) {
+  const auto offset = iso15434PayloadOffset(value);
+  for (size_t index = offset; index < value.length(); ++index) {
+    if (value[index] != 'Q') {
+      continue;
+    }
+    const auto next = index + 1U;
+    if (next >= value.length() || !std::isdigit(static_cast<unsigned char>(value[next]))) {
+      continue;
+    }
+    size_t end = next;
+    while (end < value.length() && std::isdigit(static_cast<unsigned char>(value[end]))) {
+      ++end;
+    }
+    return value.substring(next, end);
+  }
+  return {};
+}
+
 String digikeyLookupCodeFromDataMatrix(const String& value) {
   auto lookup = findSeparatedDataIdentifier(value, "P");
   if (lookup.length() == 0) {
@@ -115,6 +134,24 @@ String digikeyLookupCodeFromDataMatrix(const String& value) {
     lookup = findSeparatedDataIdentifier(value, "1P");
   }
   return trimCopy(lookup);
+}
+
+int digikeyQuantityFromDataMatrix(const String& value) {
+  auto quantity = findSeparatedDataIdentifier(value, "Q");
+  if (quantity.length() == 0) {
+    quantity = findSuppressedQuantityField(value);
+  }
+  const auto trimmed = trimCopy(quantity);
+  if (trimmed.length() == 0) {
+    return 1;
+  }
+  for (size_t index = 0; index < trimmed.length(); ++index) {
+    if (!std::isdigit(static_cast<unsigned char>(trimmed[index]))) {
+      return 1;
+    }
+  }
+  const long parsed = trimmed.toInt();
+  return parsed <= 0 ? 1 : static_cast<int>(parsed);
 }
 
 bool isDataMatrixScan(const String& value) {
@@ -185,6 +222,11 @@ void HimsScanApp::loop() {
   // Drain UART before any Wi-Fi operation that may briefly block.
   pollScanner();
 
+  if (state_ == State::AwaitQuantity) {
+    delay(2);
+    return;
+  }
+
   if (serviceOta()) {
     delay(2);
     return;
@@ -226,10 +268,16 @@ void HimsScanApp::handleScan(const String& code) {
   if (isDataMatrixScan(raw)) {
     const auto lookupCode = digikeyLookupCodeFromDataMatrix(trimmed);
     const auto forwardedCode = lookupCode.length() > 0 ? lookupCode : trimmed;
+    const auto defaultQuantity = digikeyQuantityFromDataMatrix(trimmed);
     resetPending();
-    queueScan(forwardedCode);
-    Serial.println("Queued DigiKey Data Matrix scan for HIMS software.");
-    sendDebugMessage(String("data matrix scan queued ") + forwardedCode, "scan");
+    scannedCode_ = forwardedCode;
+    quantity_.setDefaultValue(defaultQuantity);
+    pendingScanType_ = PendingScanType::DigiKeyDataMatrix;
+    setAwaitingQuantity();
+    Serial.print("DigiKey default quantity: ");
+    Serial.println(quantity_.displayText().c_str());
+    Serial.println("Enter quantity, then press A to add. C cancels.");
+    sendDebugMessage(String("data matrix pending ") + forwardedCode + " qty " + quantity_.displayText(), "scan");
     return;
   }
 
@@ -283,6 +331,10 @@ void HimsScanApp::handleKey(const HimsKeyEvent& event) {
   if (event.type == HimsKeyEventType::Add || event.type == HimsKeyEventType::Subtract) {
     if (state_ == State::Idle || scannedCode_.length() == 0) {
       Serial.println("No scanned code to submit.");
+      return;
+    }
+    if (pendingScanType_ == PendingScanType::DigiKeyDataMatrix && event.type == HimsKeyEventType::Subtract) {
+      Serial.println("DigiKey scans use A to confirm the quantity.");
       return;
     }
     submitCurrent(event.type == HimsKeyEventType::Add ? 'A' : 'B');
@@ -505,6 +557,20 @@ void HimsScanApp::exitStandby() {
 }
 
 void HimsScanApp::submitCurrent(char action) {
+  if (pendingScanType_ == PendingScanType::DigiKeyDataMatrix) {
+    if (action != 'A') {
+      Serial.println("DigiKey scans require A to confirm.");
+      return;
+    }
+
+    const auto quantity = quantity_.consume(true);
+    queueScan(scannedCode_, quantity);
+    Serial.print("Queued DigiKey scan quantity ");
+    Serial.println(String(quantity).c_str());
+    resetPending();
+    return;
+  }
+
   const auto delta = quantity_.consume(action == 'A');
   QuantityRequest request;
   request.deviceId = clientConfig_.deviceId;
@@ -714,6 +780,7 @@ void HimsScanApp::resetPending() {
   scannedCode_.clear();
   quantity_.clear();
   state_ = State::Idle;
+  pendingScanType_ = PendingScanType::None;
 }
 
 }  // namespace hims_scan

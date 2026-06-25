@@ -27,18 +27,44 @@ string classificationText(const InventoryItem& item) {
 bool isBulky(const string& text) {
   return containsAny(text, {"module", "development board", "dev board", "dev kit", "breakout", "evaluation board",
                             "esp32", "esp8266", "to-220", "to220", "to-247", "to247", "to-3 ", "to-3,",
-                            "to-263", "to263", "d2pak", "d-pak", "dpak", "power module"});
+                            "to-126", "to126", "to-218", "to218", "to-262", "to262", "to-263", "to263",
+                            "d2pak", "d-pak", "dpak", "power module"});
+}
+
+bool hasThroughHoleEvidence(const string& text) {
+  return containsAny(text, {"through hole", "through-hole", "tht", "radial", "axial", "wire leads", "wire lead",
+                            "pc pins", "pc pin", "to-92", "to92", "dip-", "pdip", "cdip"});
+}
+
+bool hasSurfaceMountEvidence(const string& text) {
+  return containsAny(text, {"surface mount", "surface-mount", "smd", "smt"});
+}
+
+bool hasChipPassivePackage(const string& text) {
+  return containsAny(text, {"01005", "0201", "0402", "0603", "0805", "1206", "1210", "1806", "1812", "2010",
+                            "2512"});
 }
 
 bool hasCompactSemiconductorPackage(const string& text) {
   return containsAny(text, {"sot-23", "sot23", "sot-323", "sot323", "sot-363", "sot363", "sc-70", "sc70",
                             "soic", "sop", "ssop", "tssop", "msop", "qfn", "dfn", "qfp", "tqfp", "lqfp",
-                            "bga", "dip-", "pdip", "cdip", "wson", "vson", "ucsp", "csp"});
+                            "bga", "wson", "vson", "ucsp", "csp"});
+}
+
+bool hasCompactDiscretePackage(const string& text) {
+  return containsAny(text, {"sod-123", "sod123", "sod-323", "sod323", "sod-523", "sod523", "sma", "smb", "smc",
+                            "mini-melf", "minimelf"});
+}
+
+bool isSmdRackEligible(const string& text) {
+  return !isBulky(text) && !hasThroughHoleEvidence(text) &&
+         (hasSurfaceMountEvidence(text) || hasChipPassivePackage(text) || hasCompactSemiconductorPackage(text) ||
+          hasCompactDiscretePackage(text));
 }
 
 optional<string> componentTypeFor(const InventoryItem& item) {
   const auto text = classificationText(item);
-  if (isBulky(text)) return nullopt;
+  if (!isSmdRackEligible(text)) return nullopt;
   if (containsAny(text, {"resistor", "resistors"})) return "resistors";
   if (containsAny(text, {"capacitor", "capacitors"})) return "capacitors";
   if (containsAny(text, {"inductor", "inductors", "choke", "coil"})) return "inductors";
@@ -113,14 +139,12 @@ bool reconcileRackAssignment(InventoryStore& store, InventoryItem& item) {
   if (item.rackAssignment != RackAssignmentMode::Automatic) return false;
   const auto componentType = componentTypeFor(item);
   auto* currentRack = findRack(store, item.rackId);
-  if (currentRack != nullptr && isValidRackSlot(item.rackSlot) &&
-      !slotOccupied(store, item.rackId, item.rackSlot, &item)) {
-    return false;
-  }
   if (!componentType) {
-    const bool changed = !item.rackId.empty() || !item.rackSlot.empty();
+    const bool changed = item.rackAssignment != RackAssignmentMode::Unassigned || !item.rackId.empty() ||
+                         !item.rackSlot.empty();
     item.rackId.clear();
     item.rackSlot.clear();
+    item.rackAssignment = RackAssignmentMode::Unassigned;
     return changed;
   }
   if (currentRack != nullptr && currentRack->componentType == *componentType && isValidRackSlot(item.rackSlot) &&

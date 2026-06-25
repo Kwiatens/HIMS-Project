@@ -152,10 +152,14 @@ class App {
   void refreshPrinterState();
   void openPrinterSetup();
   bool printSelectedLabel();
+  bool printLabelForItem(const InventoryItem& item, const std::string& successPrefix, bool openSetupOnMissingPrinter);
+  void toggleAutoPrintScannedLabels();
+  bool autoPrintScannedLabel(const std::string& itemId);
   std::string printerSummary() const;
   void openHimsScanSetup();
   bool regenerateHimsScanToken();
   bool clearHimsScanPairing();
+  bool copyHimsScanToken();
   DeviceQuantityResult enqueueDeviceQuantity(const DeviceQuantityRequest& request);
   void enqueueDeviceStatus(const DeviceStatusReport& report);
   void processDeviceRequests();
@@ -307,6 +311,7 @@ class App {
   size_t printerSelection_ = 0;
   time_t scannerFlashUntil_ = 0;
   time_t printerFlashUntil_ = 0;
+  bool autoPrintScannedLabels_ = true;
 };
 
 }  // namespace hims

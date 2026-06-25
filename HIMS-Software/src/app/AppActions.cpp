@@ -111,7 +111,8 @@ bool mergeDigiKeyMetadata(InventoryItem& item, const DigiKeyProductDetails& deta
     if (trimmed.empty()) {
       return;
     }
-    if (target.empty() || (replaceUnknown && (target == "Unknown" || target == "Scanned DigiKey Item"))) {
+    if (target.empty() || (replaceUnknown && (target == "Unknown" || target == "Unsorted" ||
+                                              target == "Scanned DigiKey Item"))) {
       target = trimmed;
       changed = true;
     }
@@ -123,6 +124,7 @@ bool mergeDigiKeyMetadata(InventoryItem& item, const DigiKeyProductDetails& deta
   }
 
   assignIfUseful(item.manufacturer, details.manufacturerName, true);
+  assignIfUseful(item.category, details.categoryName, true);
   assignIfUseful(item.sku, details.manufacturerPartNumber);
   assignIfUseful(item.productUrl, details.productUrl);
   assignIfUseful(item.datasheetUrl, details.datasheetUrl);
@@ -1049,6 +1051,30 @@ void App::logActivity(const string& kind, const string& message) {
   dirty_ = true;
 }
 
+void App::toggleAutoPrintScannedLabels() {
+  autoPrintScannedLabels_ = !autoPrintScannedLabels_;
+  setMessage(autoPrintScannedLabels_ ? "Auto label printing enabled" : "Auto label printing disabled", 3);
+}
+
+bool App::autoPrintScannedLabel(const string& itemId) {
+  if (!autoPrintScannedLabels_) {
+    return false;
+  }
+
+  const auto* item = store_.findById(itemId);
+  if (item == nullptr) {
+    return false;
+  }
+
+  if (!printerService_.hasConfiguredPrinter()) {
+    setMessage("Auto label skipped: no printer configured", 4);
+    return true;
+  }
+
+  printLabelForItem(*item, "Auto-printed label for ", false);
+  return true;
+}
+
 void App::pushScanCode(const DeviceScanRequest& request) {
   lock_guard<mutex> lock(scanMutex_);
   scanQueue_.push_back(request);
@@ -1089,9 +1115,13 @@ void App::processScans() {
       if (resolution.created) {
         if (auto* item = store_.findById(resolution.itemId)) {
           item->quantity = max(0, request.quantity);
+          reconcileRackAssignment(store_, *item);
         }
         logActivity("scan", "Created item from code " + code + " qty " + to_string(max(0, request.quantity)));
       } else {
+        if (auto* item = store_.findById(resolution.itemId)) {
+          reconcileRackAssignment(store_, *item);
+        }
         logActivity("scan", "Matched existing item with code " + code);
       }
 
@@ -1108,9 +1138,11 @@ void App::processScans() {
         }
       }
 
-      saveState();
       changePage(Page::Detail);
-      setMessage(resolution.message, 3);
+      saveState();
+      if (!resolution.created || !autoPrintScannedLabel(resolution.itemId)) {
+        setMessage(resolution.message, 3);
+      }
     } else {
       setMessage("Scan ignored: " + resolution.message, 3);
     }
@@ -1634,17 +1666,17 @@ string App::shortcutSummary() const {
 
   switch (page_) {
     case Page::Dashboard:
-      return "Go: 1/Tab/Enter stock, m racks, 2 scanner | Create: 3 add, 5/i import | Setup: h folder, l printer, u pairing | Search: / or f | Reload: 4/r/d | Quit: q";
+      return "Go: 1/Tab/Enter stock, m racks, 2 scanner | Create: 3 add, 5/i import | Setup: h folder, l printer, u pairing | Print: P auto-label | Search: / or f | Reload: 4/r/d | Quit: q";
     case Page::Stock:
-      return "Navigate: Up/Down/j/k move, Enter detail, m racks, Tab dashboard | Edit: e edit, n new, +/- qty | Tools: / search, d datasheet, o product, g DigiKey, p print, s scanner | System: Ctrl+Z undo, Ctrl+Backspace delete, h folder, r reload, q quit";
+      return "Navigate: Up/Down/j/k move, Enter detail, m racks, Tab dashboard | Edit: e edit, n new, +/- qty | Tools: / search, d datasheet, o product, g DigiKey, p print, P auto-label, s scanner | System: Ctrl+Z undo, Ctrl+Backspace delete, h folder, r reload, q quit";
     case Page::Detail:
-      return "Navigate: Esc stock, Up/Down/j/k move, m racks | Edit: e edit, +/- qty | Tools: / search, d datasheet, o product, g DigiKey, p print, s scanner | System: Ctrl+Z undo, h folder, q quit";
+      return "Navigate: Esc stock, Up/Down/j/k move, m racks | Edit: e edit, +/- qty | Tools: / search, d datasheet, o product, g DigiKey, p print, P auto-label, s scanner | System: Ctrl+Z undo, h folder, q quit";
     case Page::RackManagement:
       return "Racks: [/ ] rack, g jump, f filter, arrows/hjkl slot | Slot: Space move/place, Enter detail, p part label, P rack label | Admin: c create, r rename, t type, x delete empty | Back: Tab/Esc";
     case Page::PrinterSetup:
-      return "Select printer: Up/Down move, Enter apply | Actions: r refresh, t test, s save | Back: Esc dashboard, q quit";
+      return "Select printer: Up/Down move, Enter apply | Actions: r refresh, t test, s save, P auto-label | Back: Esc dashboard, q quit";
     case Page::HimsScanSetup:
-      return "Actions: r regenerate token, c clear device, o open scanner, Enter open scanner | Back: Esc dashboard, q quit";
+      return "Actions: t copy token, r regenerate token, c clear device, o open scanner, P auto-label, Enter open scanner | Back: Esc dashboard, q quit";
     case Page::ImportCsv:
       if (importSyncPrompt_) {
         return "Finish: Enter/y sync with DigiKey API | n/Esc finish without sync";
